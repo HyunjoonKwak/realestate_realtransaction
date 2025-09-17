@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block title %}API 테스트 - 실거래가 조회 시스템{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex align-items-center mb-3">
+            <i class="fas fa-flask text-primary me-3" style="font-size: 2rem;"></i>
+            <div>
+                <h1 class="mb-0">국토부 API 테스트</h1>
+                <p class="text-muted mb-0">지역코드로 직접 국토부 API 호출 테스트</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 테스트 폼 -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">
+                    <i class="fas fa-search me-2"></i>API 호출 테스트
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="regionCode" class="form-label">지역코드 (5자리)</label>
+                            <input type="text" class="form-control" id="regionCode" placeholder="예: 45110" maxlength="5">
+                            <div class="form-text">전라북도 전주시: 45110, 서울 강남구: 11680</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="dealYmd" class="form-label">거래년월 (YYYYMM)</label>
+                            <input type="text" class="form-control" id="dealYmd" placeholder="예: 202409" maxlength="6">
+                            <div class="form-text">현재: 202409 (2024년 9월)</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-12">
+                        <button type="button" class="btn btn-primary" id="testBtn">
+                            <i class="fas fa-play me-1"></i>API 호출 테스트
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary ms-2" id="clearBtn">
+                            <i class="fas fa-undo me-1"></i>초기화
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 로딩 스피너 -->
+<div id="loadingSpinner" class="text-center d-none">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">API 호출 중...</span>
+    </div>
+    <p class="mt-2">국토부 API를 호출하고 있습니다...</p>
+</div>
+
+<!-- 결과 표시 -->
+<div id="results" class="d-none">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-chart-line me-2"></i>API 호출 결과
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <!-- 요약 정보 -->
+                    <div class="row mb-3" id="summaryInfo">
+                        <!-- 동적으로 채워짐 -->
+                    </div>
+                    
+                    <!-- 원본 응답 -->
+                    <div class="mb-3">
+                        <h6><i class="fas fa-code me-2"></i>원본 XML 응답</h6>
+                        <pre id="rawResponse" class="bg-light p-3" style="max-height: 300px; overflow-y: auto; font-size: 0.8rem;"></pre>
+                    </div>
+                    
+                    <!-- 파싱된 데이터 -->
+                    <div class="mb-3">
+                        <h6><i class="fas fa-table me-2"></i>파싱된 거래 데이터</h6>
+                        <div id="parsedData" style="max-height: 400px; overflow-y: auto;">
+                            <!-- 동적으로 채워짐 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 오류 메시지 -->
+<div id="errorMessage" class="alert alert-danger d-none">
+    <h5 class="alert-heading"><i class="fas fa-exclamation-triangle"></i> API 호출 오류</h5>
+    <p id="errorText" class="mb-0"></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // 현재 날짜 설정
+    const now = new Date();
+    const currentMonth = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0');
+    $('#dealYmd').val(currentMonth);
+    
+    // 테스트 버튼 클릭
+    $('#testBtn').on('click', function() {
+        performApiTest();
+    });
+    
+    // 초기화 버튼 클릭
+    $('#clearBtn').on('click', function() {
+        resetForm();
+    });
+    
+    // Enter 키 이벤트
+    $('#regionCode, #dealYmd').on('keypress', function(e) {
+        if (e.which === 13) {
+            performApiTest();
+        }
+    });
+});
+
+function performApiTest() {
+    const regionCode = $('#regionCode').val().trim();
+    const dealYmd = $('#dealYmd').val().trim();
+    
+    if (!regionCode || !dealYmd) {
+        showError('지역코드와 거래년월을 모두 입력해주세요.');
+        return;
+    }
+    
+    if (regionCode.length !== 5) {
+        showError('지역코드는 5자리여야 합니다.');
+        return;
+    }
+    
+    if (dealYmd.length !== 6) {
+        showError('거래년월은 6자리(YYYYMM)여야 합니다.');
+        return;
+    }
+    
+    showLoading();
+    hideError();
+    hideResults();
+    
+    $.ajax({
+        url: '/api/test/direct',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            region_code: regionCode,
+            deal_ymd: dealYmd
+        }),
+        success: function(response) {
+            hideLoading();
+            console.log('API 테스트 응답:', response);
+            
+            if (response.success) {
+                displayResults(response);
+            } else {
+                showError(response.message || 'API 호출에 실패했습니다.');
+            }
+        },
+        error: function(xhr, status, error) {
+            hideLoading();
+            console.error('API 테스트 오류:', xhr.responseText);
+            showError('API 호출 중 오류가 발생했습니다: ' + error);
+        }
+    });
+}
+
+function displayResults(response) {
+    const data = response.data;
+    const rawXml = response.raw_xml;
+    const summary = response.summary;
+    
+    // 요약 정보 표시
+    const summaryHtml = `
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body text-center">
+                    <h6 class="card-title">지역코드</h6>
+                    <h4 class="text-primary">${summary.region_code}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body text-center">
+                    <h6 class="card-title">거래년월</h6>
+                    <h4 class="text-success">${summary.deal_ymd}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body text-center">
+                    <h6 class="card-title">거래건수</h6>
+                    <h4 class="text-info">${summary.total_count}건</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body text-center">
+                    <h6 class="card-title">HTTP 상태</h6>
+                    <h4 class="text-warning">${summary.http_status}</h4>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    $('#summaryInfo').html(summaryHtml);
+    
+    // 원본 XML 표시
+    $('#rawResponse').text(rawXml);
+    
+    // 파싱된 데이터 표시
+    let parsedHtml = '';
+    if (data && data.length > 0) {
+        parsedHtml = `
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>아파트명</th>
+                            <th>거래일</th>
+                            <th>거래금액</th>
+                            <th>전용면적</th>
+                            <th>층</th>
+                            <th>건축년도</th>
+                            <th>법정동</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        data.forEach(item => {
+            const dealAmount = Math.round(item.deal_amount / 10000);
+            parsedHtml += `
+                <tr>
+                    <td>${item.apt_name || '-'}</td>
+                    <td>${item.deal_date || '-'}</td>
+                    <td>${dealAmount.toLocaleString()}만원</td>
+                    <td>${item.exclusive_area || '-'}㎡</td>
+                    <td>${item.floor || '-'}층</td>
+                    <td>${item.build_year || '-'}년</td>
+                    <td>${item.umd_nm || '-'}</td>
+                </tr>
+            `;
+        });
+        
+        parsedHtml += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else {
+        parsedHtml = `
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                해당 기간에 거래 데이터가 없습니다.
+            </div>
+        `;
+    }
+    
+    $('#parsedData').html(parsedHtml);
+    $('#results').removeClass('d-none');
+}
+
+function resetForm() {
+    $('#regionCode').val('');
+    $('#dealYmd').val('');
+    hideResults();
+    hideError();
+    hideLoading();
+}
+
+function showError(message) {
+    $('#errorText').text(message);
+    $('#errorMessage').removeClass('d-none');
+}
+
+function hideError() {
+    $('#errorMessage').addClass('d-none');
+}
+
+function showLoading() {
+    $('#loadingSpinner').removeClass('d-none');
+}
+
+function hideLoading() {
+    $('#loadingSpinner').addClass('d-none');
+}
+
+function hideResults() {
+    $('#results').addClass('d-none');
+}
+</script>
+{% endblock %}

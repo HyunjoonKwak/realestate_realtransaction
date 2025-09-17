@@ -718,3 +718,26 @@ class MolitRealEstateAPI:
     def get_region_hierarchy(self) -> Dict:
         """전체 지역 계층 구조 반환"""
         return self.region_hierarchy
+
+    def _get_raw_xml_response(self, lawd_cd: str, deal_ymd: str) -> str:
+        """원본 XML 응답 반환 (테스트용)"""
+        try:
+            url = "http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev"
+            params = {
+                'serviceKey': self.service_key,
+                'LAWD_CD': lawd_cd,
+                'DEAL_YMD': deal_ymd,
+                'numOfRows': 1000,
+                'pageNo': 1
+            }
+            
+            response = requests.get(url, params=params, timeout=30)
+            self.logger.info(f"원본 XML 요청: {url}")
+            self.logger.info(f"요청 파라미터: {params}")
+            self.logger.info(f"HTTP 상태코드: {response.status_code}")
+            
+            return response.text
+            
+        except Exception as e:
+            self.logger.error(f"원본 XML 응답 조회 실패: {e}")
+            return f"XML 응답 조회 실패: {str(e)}"

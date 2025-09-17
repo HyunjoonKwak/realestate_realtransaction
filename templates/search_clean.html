@@ -236,108 +236,24 @@ $(document).ready(function() {
     // 시/도 변경 이벤트
     $('#citySelect').on('change', function() {
         const city = $(this).val();
-        
-        // 시/도 선택을 제외하고 초기화
-        $('#districtSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
-        $('#dongSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
-        $('#apartmentSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
-        
-        // 버튼 초기화
-        $('#step1Btn').prop('disabled', true);
-        $('#step2Btn').prop('disabled', true);
-        $('#step3Btn').prop('disabled', true);
-        
-        // 카드 초기화
-        $('#step2Card').css('opacity', '0.5');
-        $('#step3Card').css('opacity', '0.5');
-        
-        // 결과 영역 숨기기
-        $('#step1Results').addClass('d-none');
-        $('#step2Results').addClass('d-none');
-        $('#step3Results').addClass('d-none');
-        $('#errorMessage').addClass('d-none');
-        
-        // 전역 변수 초기화
-        currentRegionCode = null;
-        currentDongName = null;
-        currentApartmentName = null;
-        window.allApartments = null;
-        
-        // 로딩 스피너 숨기기
-        hideLoading();
-        
-        if (city) {
-            loadDistricts(city);
-        }
-        
-        // 시/도 변경 시에도 버튼 상태 확인
-        const district = $('#districtSelect').val();
-        console.log('시/도 변경:', city, district);
-        if (city && district) {
-            $('#step1Btn').prop('disabled', false);
-            // CSS 강제 설정 - !important 사용
-            $('#step1Btn').css({
-                'pointer-events': 'auto !important',
-                'cursor': 'pointer !important',
-                'z-index': '9999 !important',
-                'position': 'relative !important'
-            });
-            
-            // 추가적인 스타일 강제 적용
-            $('#step1Btn').attr('style', $('#step1Btn').attr('style') + '; pointer-events: auto !important; cursor: pointer !important; z-index: 9999 !important;');
-            
-            console.log('1단계 버튼 활성화됨 (시/도 변경)');
-            console.log('버튼 상태 재확인 (시/도 변경):', $('#step1Btn').prop('disabled'));
-        } else {
-            $('#step1Btn').prop('disabled', true);
-            console.log('1단계 버튼 비활성화됨 (시/도 변경)');
-        }
+        $('#districtSelect').val('').prop('disabled', true);
+        loadDistricts(city);
+        resetStepsFrom(1);
     });
 
     // 군/구 변경 이벤트
     $('#districtSelect').on('change', function() {
-        const city = $('#citySelect').val();
         const district = $(this).val();
-        console.log('군/구 변경:', city, district);
-        if (city && district) {
+        if (district) {
             $('#step1Btn').prop('disabled', false);
-            // CSS 강제 설정 - !important 사용
-            $('#step1Btn').css({
-                'pointer-events': 'auto !important',
-                'cursor': 'pointer !important',
-                'z-index': '9999 !important',
-                'position': 'relative !important'
-            });
-            
-            // 추가적인 스타일 강제 적용
-            $('#step1Btn').attr('style', $('#step1Btn').attr('style') + '; pointer-events: auto !important; cursor: pointer !important; z-index: 9999 !important;');
-            
-            console.log('1단계 버튼 활성화됨');
-            console.log('버튼 상태 재확인:', $('#step1Btn').prop('disabled'));
-            console.log('버튼 클릭 가능:', !$('#step1Btn').prop('disabled'));
-            console.log('CSS 적용 후 pointer-events:', $('#step1Btn').css('pointer-events'));
-            console.log('CSS 적용 후 z-index:', $('#step1Btn').css('z-index'));
         } else {
             $('#step1Btn').prop('disabled', true);
-            console.log('1단계 버튼 비활성화됨');
         }
         resetStepsFrom(1);
     });
 
-    // 1단계 버튼 클릭 - 이벤트 위임 사용
-    $(document).on('click', '#step1Btn', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('1단계 버튼 클릭됨');
-        console.log('시/도:', $('#citySelect').val());
-        console.log('군/구:', $('#districtSelect').val());
-        console.log('버튼 disabled 상태:', $(this).prop('disabled'));
-        
-        if ($(this).prop('disabled')) {
-            console.log('버튼이 비활성화되어 있어서 클릭 무시');
-            return;
-        }
-        
+    // 1단계 버튼 클릭
+    $('#step1Btn').on('click', function() {
         performStep1();
     });
 
@@ -346,12 +262,8 @@ $(document).ready(function() {
         const dong = $(this).val();
         if (dong) {
             $('#step2Btn').prop('disabled', false);
-            // 법정동별 아파트 필터링
-            filterApartmentsByDong(dong);
         } else {
             $('#step2Btn').prop('disabled', true);
-            // 전체 아파트 표시
-            showAllApartments();
         }
         resetStepsFrom(2);
     });
@@ -379,70 +291,6 @@ $(document).ready(function() {
 
     // 초기화
     resetAllSteps();
-    
-    // 추가 디버깅: 버튼 상태 확인
-    setTimeout(function() {
-        console.log('페이지 로드 후 버튼 상태 확인:');
-        console.log('step1Btn 존재:', $('#step1Btn').length > 0);
-        console.log('step1Btn disabled:', $('#step1Btn').prop('disabled'));
-        console.log('step1Btn visible:', $('#step1Btn').is(':visible'));
-        console.log('step1Btn CSS pointer-events:', $('#step1Btn').css('pointer-events'));
-        console.log('step1Btn CSS z-index:', $('#step1Btn').css('z-index'));
-        
-        // CSS 강제 설정 - !important 사용
-        $('#step1Btn').css({
-            'pointer-events': 'auto !important',
-            'cursor': 'pointer !important',
-            'z-index': '9999 !important',
-            'position': 'relative !important'
-        });
-        
-        // 추가적인 스타일 강제 적용
-        $('#step1Btn').attr('style', $('#step1Btn').attr('style') + '; pointer-events: auto !important; cursor: pointer !important; z-index: 9999 !important;');
-        
-        // 버튼에 직접 클릭 이벤트 추가 (백업)
-        $('#step1Btn').off('click').on('click', function(e) {
-            console.log('직접 바인딩된 클릭 이벤트 실행됨');
-            e.preventDefault();
-            e.stopPropagation();
-            
-            if ($(this).prop('disabled')) {
-                console.log('버튼이 비활성화되어 있음');
-                return false;
-            }
-            
-            console.log('performStep1 호출');
-            performStep1();
-            return false;
-        });
-        
-        // 추가적인 클릭 이벤트 (mousedown, mouseup)
-        $('#step1Btn').on('mousedown', function(e) {
-            console.log('버튼 mousedown 이벤트');
-        });
-        
-        $('#step1Btn').on('mouseup', function(e) {
-            console.log('버튼 mouseup 이벤트');
-            if (!$(this).prop('disabled')) {
-                console.log('mouseup에서 performStep1 호출');
-                performStep1();
-            }
-        });
-        
-        // 터치 이벤트도 추가 (모바일 대응)
-        $('#step1Btn').on('touchstart', function(e) {
-            console.log('버튼 touchstart 이벤트');
-        });
-        
-        $('#step1Btn').on('touchend', function(e) {
-            console.log('버튼 touchend 이벤트');
-            e.preventDefault();
-            if (!$(this).prop('disabled')) {
-                console.log('touchend에서 performStep1 호출');
-                performStep1();
-            }
-        });
-    }, 1000);
 });
 
 // 단계별 초기화 함수들
@@ -472,37 +320,21 @@ function resetAllSteps() {
     currentRegionCode = null;
     currentDongName = null;
     currentApartmentName = null;
-    window.allApartments = null;
-    
-    // 로딩 스피너 숨기기
-    hideLoading();
 }
 
 function resetStepsFrom(step) {
     // 해당 단계부터 이후 단계들 초기화
     if (step <= 1) {
         $('#dongSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
-        $('#step1Btn').prop('disabled', true);
         $('#step2Btn').prop('disabled', true);
         $('#step2Card').css('opacity', '0.5');
         $('#step2Results').addClass('d-none');
-        $('#step1Results').addClass('d-none');
-        
-        // 전역 변수 초기화
-        currentRegionCode = null;
-        currentDongName = null;
-        currentApartmentName = null;
-        window.allApartments = null;
     }
     if (step <= 2) {
         $('#apartmentSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
         $('#step3Btn').prop('disabled', true);
         $('#step3Card').css('opacity', '0.5');
         $('#step3Results').addClass('d-none');
-        
-        // 전역 변수 초기화
-        currentDongName = null;
-        currentApartmentName = null;
     }
 }
 
@@ -538,44 +370,16 @@ function hideLoading() {
     $('#loadingSpinner').addClass('d-none');
 }
 
-function showToast(message, type = 'info') {
-    // 간단한 토스트 알림 구현
-    const alertClass = type === 'success' ? 'alert-success' : 
-                      type === 'error' ? 'alert-danger' : 
-                      type === 'warning' ? 'alert-warning' : 'alert-info';
-    
-    const toastHtml = `
-        <div class="alert ${alertClass} alert-dismissible fade show position-fixed" 
-             style="top: 20px; right: 20px; z-index: 9999; min-width: 300px;">
-            ${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-    `;
-    
-    $('body').append(toastHtml);
-    
-    // 3초 후 자동 제거
-    setTimeout(() => {
-        $('.alert').fadeOut(() => {
-            $('.alert').remove();
-        });
-    }, 3000);
-}
-
 // 1단계: 시도/군구 선택 후 법정동 목록 조회
 function performStep1() {
     const city = $('#citySelect').val();
     const district = $('#districtSelect').val();
     
-    console.log('performStep1 호출됨:', city, district);
-    
     if (!city || !district) {
-        console.log('시도 또는 군구가 선택되지 않음');
         showError('시도와 군구를 모두 선택해주세요.');
         return;
     }
     
-    console.log('API 호출 시작:', '/api/search/step1');
     showLoading();
     hideError();
     
@@ -589,30 +393,17 @@ function performStep1() {
         }),
         success: function(response) {
             hideLoading();
-            console.log('1단계 API 응답:', response);
             if (response.success) {
                 currentRegionCode = response.region_code;
                 displayStep1Results(response);
                 enableStep2();
             } else {
-                console.error('1단계 API 오류:', response.message);
-                let errorMessage = response.message;
-                if (response.suggestion) {
-                    errorMessage += '\n\n' + response.suggestion;
-                }
-                showError(errorMessage);
+                showError(response.message);
             }
         },
-        error: function(xhr, status, error) {
+        error: function() {
             hideLoading();
-            console.error('1단계 API 오류:', xhr.responseText);
-            console.error('상태:', status, '오류:', error);
-            
-            let errorMessage = '지역 데이터 조회 중 오류가 발생했습니다.';
-            if (xhr.responseJSON && xhr.responseJSON.message) {
-                errorMessage = xhr.responseJSON.message;
-            }
-            showError(errorMessage + ' 다시 시도해주세요.');
+            showError('법정동 목록 조회 중 오류가 발생했습니다.');
         }
     });
 }
@@ -693,12 +484,8 @@ function performStep3() {
 // 결과 표시 함수들
 function displayStep1Results(response) {
     const dongList = response.dong_list;
-    const apartmentList = response.apartment_list;
     const totalCount = response.total_count;
     const fromCache = response.from_cache;
-    
-    // 전역 변수에 아파트 목록 저장 (필터링용)
-    window.allApartments = apartmentList;
     
     // 법정동 선택 옵션 업데이트
     $('#dongSelect').find('option:not(:first)').remove();
@@ -720,16 +507,8 @@ function displayStep1Results(response) {
         <div class="col-md-3">
             <div class="card bg-light">
                 <div class="card-body text-center">
-                    <h6 class="card-title">아파트 수</h6>
-                    <h4 class="text-success">${apartmentList.length}개</h4>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card bg-light">
-                <div class="card-body text-center">
                     <h6 class="card-title">법정동 수</h6>
-                    <h4 class="text-info">${dongList.length}개</h4>
+                    <h4 class="text-success">${dongList.length}개</h4>
                 </div>
             </div>
         </div>
@@ -737,57 +516,21 @@ function displayStep1Results(response) {
             <div class="card bg-light">
                 <div class="card-body text-center">
                     <h6 class="card-title">데이터 출처</h6>
-                    <h4 class="text-warning">${fromCache ? '캐시' : 'API'}</h4>
+                    <h4 class="text-info">${fromCache ? '캐시' : 'API'}</h4>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-light">
+                <div class="card-body text-center">
+                    <h6 class="card-title">조회 기간</h6>
+                    <h4 class="text-warning">24개월</h4>
                 </div>
             </div>
         </div>
     `;
     
-    // 아파트 목록 표시
-    let apartmentHtml = '';
-    if (apartmentList.length > 0) {
-        apartmentHtml = `
-            <div class="row mt-3">
-                <div class="col-12">
-                    <h6><i class="fas fa-building me-2"></i>아파트 목록</h6>
-                    <div class="row">
-        `;
-        
-        // 최대 20개 아파트만 표시
-        const displayApartments = apartmentList.slice(0, 20);
-        displayApartments.forEach(apt => {
-            const avgPrice = Math.round(apt.avg_price / 10000);
-            apartmentHtml += `
-                <div class="col-md-6 col-lg-4 mb-3">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h6 class="card-title">${apt.apt_name}</h6>
-                            <p class="card-text">
-                                <small class="text-muted">
-                                    건축년도: ${apt.build_year}년<br>
-                                    거래건수: ${apt.transaction_count}건<br>
-                                    평균단가: ${avgPrice.toLocaleString()}만원/㎡
-                                </small>
-                            </p>
-                            <button type="button" class="btn btn-outline-primary btn-sm w-100" 
-                                    onclick="selectApartment('${apt.apt_name}')">
-                                <i class="fas fa-chart-line me-1"></i>상세보기
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-        
-        apartmentHtml += `
-                    </div>
-                    ${apartmentList.length > 20 ? `<p class="text-muted">* 상위 20개 아파트만 표시 (총 ${apartmentList.length}개)</p>` : ''}
-                </div>
-            </div>
-        `;
-    }
-    
-    $('#step1Summary').html(summaryHtml + apartmentHtml);
+    $('#step1Summary').html(summaryHtml);
     $('#step1Results').removeClass('d-none');
 }
 
@@ -894,68 +637,6 @@ function displayStep3Results(response) {
     `;
     
     $('#step3Summary').html(summaryHtml);
-    
-    // 상세 거래기록 표시
-    let transactionsHtml = '';
-    if (transactions.length > 0) {
-        transactionsHtml = `
-            <div class="row mt-3">
-                <div class="col-12">
-                    <h6><i class="fas fa-list me-2"></i>최근 거래기록</h6>
-                    <div class="table-responsive">
-                        <table class="table table-striped table-hover">
-                            <thead class="table-dark">
-                                <tr>
-                                    <th>거래일</th>
-                                    <th>거래금액</th>
-                                    <th>전용면적</th>
-                                    <th>층</th>
-                                    <th>단가(만원/㎡)</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-        `;
-        
-        // 최근 10건만 표시
-        const recentTransactions = transactions.slice(0, 10);
-        recentTransactions.forEach(tx => {
-            const dealAmount = Math.round(tx.deal_amount / 10000);
-            const pricePerArea = Math.round(tx.price_per_area / 10000);
-            
-            transactionsHtml += `
-                <tr>
-                    <td>${tx.deal_date}</td>
-                    <td>${dealAmount.toLocaleString()}만원</td>
-                    <td>${tx.exclusive_area}㎡</td>
-                    <td>${tx.floor}층</td>
-                    <td>${pricePerArea.toLocaleString()}</td>
-                </tr>
-            `;
-        });
-        
-        transactionsHtml += `
-                            </tbody>
-                        </table>
-                    </div>
-                    ${transactions.length > 10 ? `<p class="text-muted">* 최근 10건만 표시 (총 ${transactions.length}건)</p>` : ''}
-                </div>
-            </div>
-        `;
-    }
-    
-    // 관심단지 등록 버튼
-    const favoriteButtonHtml = `
-        <div class="row mt-3">
-            <div class="col-12 text-center">
-                <button type="button" class="btn btn-outline-success btn-lg" 
-                        onclick="addToFavorites('${aptName}', '${currentRegionCode}', '${$('#citySelect').val()} ${$('#districtSelect').val()}', ${transactions[0]?.build_year || 0}, event)">
-                    <i class="fas fa-heart me-2"></i>관심단지로 등록
-                </button>
-            </div>
-        </div>
-    `;
-    
-    $('#step3Summary').html(summaryHtml + transactionsHtml + favoriteButtonHtml);
     $('#step3Results').removeClass('d-none');
 }
 
@@ -966,125 +647,6 @@ function enableStep2() {
 
 function enableStep3() {
     $('#step3Card').css('opacity', '1');
-}
-
-// 아파트 선택 함수
-function selectApartment(aptName) {
-    // 3단계 API 호출
-    performStep3ForApartment(aptName);
-}
-
-// 아파트별 3단계 수행
-function performStep3ForApartment(aptName) {
-    if (!aptName || !currentRegionCode) {
-        showError('아파트를 선택해주세요.');
-        return;
-    }
-    
-    showLoading();
-    hideError();
-    
-    $.ajax({
-        url: '/api/search/step3',
-        method: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({
-            region_code: currentRegionCode,
-            apt_name: aptName
-        }),
-        success: function(response) {
-            hideLoading();
-            if (response.success) {
-                currentApartmentName = aptName;
-                displayStep3Results(response);
-            } else {
-                showError(response.message);
-            }
-        },
-        error: function() {
-            hideLoading();
-            showError('거래기록 조회 중 오류가 발생했습니다.');
-        }
-    });
-}
-
-// 법정동별 아파트 필터링
-function filterApartmentsByDong(dongName) {
-    if (!window.allApartments) return;
-    
-    const filteredApartments = window.allApartments.filter(apt => 
-        apt.dong_list && apt.dong_list.includes(dongName)
-    );
-    
-    updateApartmentDisplay(filteredApartments, `법정동 "${dongName}"의 아파트`);
-}
-
-// 전체 아파트 표시
-function showAllApartments() {
-    if (!window.allApartments) return;
-    
-    updateApartmentDisplay(window.allApartments, '전체 아파트');
-}
-
-// 아파트 표시 업데이트
-function updateApartmentDisplay(apartments, title) {
-    let apartmentHtml = '';
-    if (apartments.length > 0) {
-        apartmentHtml = `
-            <div class="row mt-3">
-                <div class="col-12">
-                    <h6><i class="fas fa-building me-2"></i>${title} (${apartments.length}개)</h6>
-                    <div class="row">
-        `;
-        
-        // 최대 20개 아파트만 표시
-        const displayApartments = apartments.slice(0, 20);
-        displayApartments.forEach(apt => {
-            const avgPrice = Math.round(apt.avg_price / 10000);
-            apartmentHtml += `
-                <div class="col-md-6 col-lg-4 mb-3">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h6 class="card-title">${apt.apt_name}</h6>
-                            <p class="card-text">
-                                <small class="text-muted">
-                                    건축년도: ${apt.build_year}년<br>
-                                    거래건수: ${apt.transaction_count}건<br>
-                                    평균단가: ${avgPrice.toLocaleString()}만원/㎡
-                                </small>
-                            </p>
-                            <button type="button" class="btn btn-outline-primary btn-sm w-100" 
-                                    onclick="selectApartment('${apt.apt_name}')">
-                                <i class="fas fa-chart-line me-1"></i>상세보기
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-        });
-        
-        apartmentHtml += `
-                    </div>
-                    ${apartments.length > 20 ? `<p class="text-muted">* 상위 20개 아파트만 표시 (총 ${apartments.length}개)</p>` : ''}
-                </div>
-            </div>
-        `;
-    } else {
-        apartmentHtml = `
-            <div class="row mt-3">
-                <div class="col-12">
-                    <div class="alert alert-info">
-                        <i class="fas fa-info-circle me-2"></i>해당 법정동에는 아파트가 없습니다.
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-    
-    // 기존 아파트 목록 부분만 업데이트
-    const currentSummary = $('#step1Summary').html();
-    const summaryPart = currentSummary.split('<div class="row mt-3">')[0];
-    $('#step1Summary').html(summaryPart + apartmentHtml);
 }
 
 // 기존 함수들 (필요한 것들만 유지)
@@ -1102,7 +664,7 @@ function loadDistricts(city) {
                 const districts = response.districts;
                 $('#districtSelect').find('option:not(:first)').remove();
                 districts.forEach(district => {
-                    $('#districtSelect').append(`<option value="${district.name}">${district.name}</option>`);
+                    $('#districtSelect').append(`<option value="${district}">${district}</option>`);
                 });
                 $('#districtSelect').prop('disabled', false);
             } else {

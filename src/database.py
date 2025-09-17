@@ -165,6 +165,24 @@ class ApartmentDatabase:
             self.logger.error(f"관심단지 추가 실패: {e}")
             return False
 
+    def check_favorite_exists(self, apt_name: str, region_code: str) -> bool:
+        """관심단지 중복 확인"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT COUNT(*) FROM favorite_apartments 
+                    WHERE apt_name = ? AND region_code = ?
+                ''', (apt_name, region_code))
+                
+                count = cursor.fetchone()[0]
+                return count > 0
+                
+        except Exception as e:
+            self.logger.error(f"관심단지 확인 실패: {e}")
+            return False
+
     def get_favorite_apartments(self) -> List[Dict]:
         """관심단지 목록 조회"""
         try:
@@ -258,7 +276,7 @@ class ApartmentDatabase:
             
         return saved_count
 
-    def get_apartment_transactions(self, apt_name: str, region_code: str = None, months: int = 12) -> List[Dict]:
+    def get_apartment_transactions_old(self, apt_name: str, region_code: str = None, months: int = 12) -> List[Dict]:
         """특정 아파트의 거래 내역 조회"""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -291,7 +309,7 @@ class ApartmentDatabase:
 
     def get_price_trend(self, apt_name: str, region_code: str = None, months: int = 12) -> Dict:
         """아파트 가격 동향 분석"""
-        transactions = self.get_apartment_transactions(apt_name, region_code, months)
+        transactions = self.get_apartment_transactions_old(apt_name, region_code, months)
         
         if not transactions:
             return {'trend': [], 'summary': {}}
@@ -343,7 +361,7 @@ class ApartmentDatabase:
         
         for fav in favorites:
             # 최신 거래 데이터 조회
-            latest_transactions = self.get_apartment_transactions(
+            latest_transactions = self.get_apartment_transactions_old(
                 fav['apt_name'], 
                 fav['region_code'], 
                 months=3
@@ -554,3 +572,132 @@ class ApartmentDatabase:
         except Exception as e:
             self.logger.error(f"캐시 통계 조회 실패: {e}")
             return {}
+
+    def get_apartments_by_dong(self, region_code: str, dong_name: str) -> List[Dict]:
+        """특정 법정동의 아파트 목록 조회"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT DISTINCT 
+                        apt_name,
+                        region_code,
+                        region_name,
+                        build_year,
+                        COUNT(*) as transaction_count,
+                        AVG(price_per_area) as avg_price,
+                        MIN(price_per_area) as min_price,
+                        MAX(price_per_area) as max_price
+                    FROM transaction_data 
+                    WHERE region_code = ? AND umd_nm = ?
+                    GROUP BY apt_name, region_code
+                    ORDER BY transaction_count DESC, apt_name
+                ''', (region_code, dong_name))
+                
+                apartments = []
+                for row in cursor.fetchall():
+                    apartments.append({
+                        'apt_name': row['apt_name'],
+                        'region_code': row['region_code'],
+                        'region_name': row['region_name'],
+                        'build_year': row['build_year'],
+                        'transaction_count': row['transaction_count'],
+                        'avg_price': round(row['avg_price'], 2) if row['avg_price'] else 0,
+                        'min_price': row['min_price'] or 0,
+                        'max_price': row['max_price'] or 0
+                    })
+                
+                return apartments
+                
+        except Exception as e:
+            self.logger.error(f"법정동별 아파트 목록 조회 실패: {e}")
+            return []
+
+    def get_apartment_transactions(self, region_code: str, apt_name: str) -> List[Dict]:
+        """특정 아파트의 거래기록 조회"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT 
+                        deal_date,
+                        deal_amount,
+                        exclusive_area,
+                        price_per_area,
+                        floor,
+                        apt_name,
+                        region_name,
+                        umd_nm,
+                        build_year
+                    FROM transaction_data 
+                    WHERE region_code = ? AND apt_name = ?
+                    ORDER BY deal_date DESC
+                ''', (region_code, apt_name))
+                
+                transactions = []
+                for row in cursor.fetchall():
+                    transactions.append({
+                        'deal_date': row['deal_date'],
+                        'deal_amount': row['deal_amount'],
+                        'exclusive_area': row['exclusive_area'],
+                        'price_per_area': row['price_per_area'],
+                        'floor': row['floor'],
+                        'apt_name': row['apt_name'],
+                        'region_name': row['region_name'],
+                        'umd_nm': row['umd_nm'],
+                        'build_year': row['build_year']
+                    })
+                
+                return transactions
+                
+        except Exception as e:
+            self.logger.error(f"아파트 거래기록 조회 실패: {e}")
+            return []
+
+    def get_apartments_by_region(self, region_code: str) -> List[Dict]:
+        """특정 지역의 모든 아파트 목록 조회 (1단계용)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT DISTINCT 
+                        apt_name,
+                        region_code,
+                        region_name,
+                        build_year,
+                        umd_nm,
+                        COUNT(*) as transaction_count,
+                        AVG(price_per_area) as avg_price,
+                        MIN(price_per_area) as min_price,
+                        MAX(price_per_area) as max_price
+                    FROM transaction_data 
+                    WHERE region_code = ?
+                    GROUP BY apt_name, region_code, umd_nm
+                    ORDER BY transaction_count DESC, apt_name
+                ''', (region_code,))
+                
+                apartments = []
+                for row in cursor.fetchall():
+                    apartments.append({
+                        'apt_name': row['apt_name'],
+                        'region_code': row['region_code'],
+                        'region_name': row['region_name'],
+                        'build_year': row['build_year'],
+                        'umd_nm': row['umd_nm'],
+                        'transaction_count': row['transaction_count'],
+                        'avg_price': round(row['avg_price'], 2) if row['avg_price'] else 0,
+                        'min_price': row['min_price'] or 0,
+                        'max_price': row['max_price'] or 0
+                    })
+                
+                return apartments
+                
+        except Exception as e:
+            self.logger.error(f"지역별 아파트 목록 조회 실패: {e}")
+            return []

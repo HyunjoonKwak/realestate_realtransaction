@@ -62,6 +62,7 @@ class ApartmentTrackerApp:
 
     def setup_routes(self):
         """라우트 설정"""
+        self.logger.info("라우트 설정 시작")
         
         # 템플릿 함수 등록
         @self.app.template_filter('getPriceChangeClass')
@@ -127,7 +128,7 @@ class ApartmentTrackerApp:
                                      message="데이터베이스를 초기화할 수 없습니다.")
             
             # 아파트 정보 조회
-            transactions = self.db.get_apartment_transactions(apt_name, region_code, months=24)
+            transactions = self.db.get_apartment_transactions_old(apt_name, region_code, months=24)
             price_trend = self.db.get_price_trend(apt_name, region_code, months=12)
             
             # 관심단지 여부 확인
@@ -268,6 +269,27 @@ class ApartmentTrackerApp:
                 self.logger.error(f"검색 API 오류: {e}")
                 return jsonify({'success': False, 'message': f'검색 중 오류가 발생했습니다: {str(e)}'})
 
+        @self.app.route('/api/favorites/check', methods=['POST'])
+        def api_check_favorite():
+            """관심단지 중복 확인 API"""
+            try:
+                if not self.db:
+                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
+                
+                data = request.get_json()
+                apt_name = data.get('apt_name')
+                region_code = data.get('region_code')
+                
+                if not apt_name or not region_code:
+                    return jsonify({'success': False, 'message': '아파트명과 지역코드가 필요합니다.'})
+                
+                exists = self.db.check_favorite_exists(apt_name, region_code)
+                return jsonify({'success': True, 'exists': exists})
+                    
+            except Exception as e:
+                self.logger.error(f"관심단지 확인 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
         @self.app.route('/api/favorites', methods=['POST'])
         def api_add_favorite():
             """관심단지 추가 API"""
@@ -313,7 +335,7 @@ class ApartmentTrackerApp:
                     return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
                 
                 months = int(request.args.get('months', 12))
-                transactions = self.db.get_apartment_transactions(apt_name, region_code, months)
+                transactions = self.db.get_apartment_transactions_old(apt_name, region_code, months)
                 price_trend = self.db.get_price_trend(apt_name, region_code, months)
                 
                 return jsonify({
@@ -349,6 +371,282 @@ class ApartmentTrackerApp:
             except Exception as e:
                 self.logger.error(f"데이터 새로고침 오류: {e}")
                 return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/search/step1', methods=['POST'])
+        def api_search_step1():
+            """1단계: 시도/군구 선택 후 법정동 목록 조회"""
+            try:
+                if not self.molit_api or not self.db:
+                    return jsonify({'success': False, 'message': 'API 또는 데이터베이스 연결 실패'})
+                
+                data = request.get_json()
+                city = data.get('city')
+                district = data.get('district')
+                
+                if not city or not district:
+                    return jsonify({'success': False, 'message': '시도와 군구를 선택해주세요.'})
+                
+                # 지역 코드 조회
+                region_code = self.molit_api.get_region_code_by_city_district(city, district)
+                if not region_code:
+                    return jsonify({'success': False, 'message': '해당 지역의 코드를 찾을 수 없습니다.'})
+                
+                # 데이터베이스에서 먼저 확인 (36개월 캐시)
+                search_date = datetime.now().strftime('%Y-%m-%d')
+                cached_data = self.db.get_search_cache(region_code, 36, search_date)
+                if cached_data and cached_data.get('raw_data'):
+                    # 캐시된 데이터가 있으면 법정동 목록과 아파트 목록 추출
+                    raw_data = cached_data['raw_data']
+                    dong_list = list(set([tx.get('umd_nm', '기타') for tx in raw_data if tx.get('umd_nm')]))
+                    dong_list.sort()
+                    
+                    # 아파트 목록 추출 (전체) - 개선된 버전
+                    apartment_list = self._extract_apartment_list_improved(raw_data)
+                    
+                    return jsonify({
+                        'success': True, 
+                        'region_code': region_code,
+                        'dong_list': dong_list,
+                        'apartment_list': apartment_list,
+                        'from_cache': True,
+                        'total_count': len(raw_data)
+                    })
+                
+                # 캐시된 데이터가 없으면 API 호출
+                self.logger.info(f"API 호출: {city} {district} (지역코드: {region_code})")
+                try:
+                    # 더 긴 기간으로 데이터 조회 (36개월)
+                    api_data = self.molit_api.get_multiple_months_data(region_code, months=36)
+                    self.logger.info(f"API 호출 결과: {len(api_data) if api_data else 0}건의 데이터")
+                except Exception as e:
+                    self.logger.error(f"API 호출 중 오류 발생: {e}")
+                    return jsonify({'success': False, 'message': f'API 호출 중 오류가 발생했습니다: {str(e)}'})
+                
+                if not api_data:
+                    return jsonify({
+                        'success': False, 
+                        'message': f'해당 지역({city} {district})의 최근 거래 데이터가 없습니다.',
+                        'suggestion': '다른 지역을 선택하거나, 서울특별시나 인천광역시 등 대도시 지역을 시도해보세요.'
+                    })
+                
+                # 데이터베이스에 저장 (캐시)
+                region_name = f"{city} {district}"
+                self.db.save_search_cache(
+                    region_code=region_code,
+                    region_name=region_name,
+                    months=36,
+                    search_date=search_date,
+                    total_count=len(api_data),
+                    classified_data={},  # 법정동별 분류는 나중에 필요시
+                    raw_data=api_data,
+                    cache_hours=24
+                )
+                
+                # 법정동 목록과 아파트 목록 추출
+                dong_list = list(set([tx.get('umd_nm', '기타') for tx in api_data if tx.get('umd_nm')]))
+                dong_list.sort()
+                
+                # 아파트 목록 추출 (전체) - 개선된 버전
+                apartment_list = self._extract_apartment_list_improved(api_data)
+                
+                return jsonify({
+                    'success': True,
+                    'region_code': region_code,
+                    'dong_list': dong_list,
+                    'apartment_list': apartment_list,
+                    'from_cache': False,
+                    'total_count': len(api_data)
+                })
+                
+            except Exception as e:
+                self.logger.error(f"1단계 검색 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/search/step2', methods=['POST'])
+        def api_search_step2():
+            """2단계: 법정동 선택 후 아파트 목록 조회"""
+            try:
+                if not self.db:
+                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
+                
+                data = request.get_json()
+                region_code = data.get('region_code')
+                dong_name = data.get('dong_name')
+                
+                if not region_code or not dong_name:
+                    return jsonify({'success': False, 'message': '지역코드와 법정동을 선택해주세요.'})
+                
+                # 해당 법정동의 아파트 목록 조회
+                apartment_list = self.db.get_apartments_by_dong(region_code, dong_name)
+                
+                return jsonify({
+                    'success': True,
+                    'apartment_list': apartment_list,
+                    'dong_name': dong_name
+                })
+                
+            except Exception as e:
+                self.logger.error(f"2단계 검색 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/search/step3', methods=['POST'])
+        def api_search_step3():
+            """3단계: 아파트 선택 후 거래기록 조회"""
+            try:
+                if not self.db:
+                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
+                
+                data = request.get_json()
+                region_code = data.get('region_code')
+                apt_name = data.get('apt_name')
+                
+                if not region_code or not apt_name:
+                    return jsonify({'success': False, 'message': '지역코드와 아파트명을 선택해주세요.'})
+                
+                # 해당 아파트의 거래기록 조회
+                transactions = self.db.get_apartment_transactions(region_code, apt_name)
+                
+                return jsonify({
+                    'success': True,
+                    'transactions': transactions,
+                    'apt_name': apt_name
+                })
+                
+            except Exception as e:
+                self.logger.error(f"3단계 검색 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+    def _extract_apartment_list(self, transactions):
+        """거래 데이터에서 아파트 목록 추출"""
+        apartment_dict = {}
+        
+        for transaction in transactions:
+            apt_name = transaction.get('apt_name', '')
+            if not apt_name:
+                continue
+                
+            if apt_name not in apartment_dict:
+                apartment_dict[apt_name] = {
+                    'apt_name': apt_name,
+                    'region_code': transaction.get('region_code', ''),
+                    'region_name': transaction.get('region_name', ''),
+                    'build_year': transaction.get('build_year', 0),
+                    'transaction_count': 0,
+                    'avg_price': 0,
+                    'min_price': float('inf'),
+                    'max_price': 0,
+                    'dong_list': set()
+                }
+            
+            # 거래 건수 증가
+            apartment_dict[apt_name]['transaction_count'] += 1
+            
+            # 가격 통계 계산
+            price = transaction.get('price_per_area', 0)
+            if price > 0:
+                apartment_dict[apt_name]['min_price'] = min(
+                    apartment_dict[apt_name]['min_price'], price
+                )
+                apartment_dict[apt_name]['max_price'] = max(
+                    apartment_dict[apt_name]['max_price'], price
+                )
+            
+            # 법정동 목록 추가
+            dong_name = transaction.get('umd_nm', '')
+            if dong_name:
+                apartment_dict[apt_name]['dong_list'].add(dong_name)
+        
+        # 평균 가격 계산 및 정리
+        apartment_list = []
+        for apt_name, apt_data in apartment_dict.items():
+            if apt_data['transaction_count'] > 0:
+                # 평균 가격 계산
+                total_price = sum(
+                    tx.get('price_per_area', 0) for tx in transactions 
+                    if tx.get('apt_name') == apt_name and tx.get('price_per_area', 0) > 0
+                )
+                apt_data['avg_price'] = total_price / apt_data['transaction_count'] if apt_data['transaction_count'] > 0 else 0
+                
+                # 무한대 처리
+                if apt_data['min_price'] == float('inf'):
+                    apt_data['min_price'] = 0
+                
+                # 법정동 목록을 리스트로 변환
+                apt_data['dong_list'] = list(apt_data['dong_list'])
+                
+                apartment_list.append(apt_data)
+        
+        # 거래 건수 기준으로 정렬
+        apartment_list.sort(key=lambda x: x['transaction_count'], reverse=True)
+        
+        return apartment_list
+
+    def _extract_apartment_list_improved(self, transactions):
+        """개선된 아파트 목록 추출 (1단계용)"""
+        apartment_dict = {}
+        
+        for transaction in transactions:
+            apt_name = transaction.get('apt_name', '')
+            if not apt_name:
+                continue
+                
+            if apt_name not in apartment_dict:
+                apartment_dict[apt_name] = {
+                    'apt_name': apt_name,
+                    'region_code': transaction.get('region_code', ''),
+                    'region_name': transaction.get('region_name', ''),
+                    'build_year': transaction.get('build_year', 0),
+                    'transaction_count': 0,
+                    'avg_price': 0,
+                    'min_price': float('inf'),
+                    'max_price': 0,
+                    'dong_list': set()
+                }
+            
+            # 거래 건수 증가
+            apartment_dict[apt_name]['transaction_count'] += 1
+            
+            # 가격 통계 계산
+            price = transaction.get('price_per_area', 0)
+            if price > 0:
+                apartment_dict[apt_name]['min_price'] = min(
+                    apartment_dict[apt_name]['min_price'], price
+                )
+                apartment_dict[apt_name]['max_price'] = max(
+                    apartment_dict[apt_name]['max_price'], price
+                )
+            
+            # 법정동 목록 추가
+            dong_name = transaction.get('umd_nm', '')
+            if dong_name:
+                apartment_dict[apt_name]['dong_list'].add(dong_name)
+        
+        # 평균 가격 계산 및 정리
+        apartment_list = []
+        for apt_name, apt_data in apartment_dict.items():
+            if apt_data['transaction_count'] > 0:
+                # 평균 가격 계산 - 해당 아파트의 모든 거래에서 계산
+                apt_transactions = [tx for tx in transactions if tx.get('apt_name') == apt_name]
+                prices = [tx.get('price_per_area', 0) for tx in apt_transactions if tx.get('price_per_area', 0) > 0]
+                
+                if prices:
+                    apt_data['avg_price'] = sum(prices) / len(prices)
+                else:
+                    apt_data['avg_price'] = 0
+                
+                # 무한대 처리
+                if apt_data['min_price'] == float('inf'):
+                    apt_data['min_price'] = 0
+                
+                # 법정동 목록을 리스트로 변환
+                apt_data['dong_list'] = list(apt_data['dong_list'])
+                
+                apartment_list.append(apt_data)
+        
+        # 거래 건수 기준으로 정렬
+        apartment_list.sort(key=lambda x: x['transaction_count'], reverse=True)
+        
+        return apartment_list
 
     def _classify_by_dong(self, transactions):
         """법정동 단위로 거래 데이터 분류"""
@@ -454,6 +752,57 @@ class ApartmentTrackerApp:
             except Exception as e:
                 self.logger.error(f"캐시 무효화 오류: {e}")
                 return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/test/direct', methods=['POST'])
+        def api_test_direct():
+            """직접 API 호출 테스트"""
+            try:
+                if not self.molit_api:
+                    return jsonify({'success': False, 'message': 'MOLIT API 연결 실패'})
+                
+                data = request.get_json()
+                region_code = data.get('region_code')
+                deal_ymd = data.get('deal_ymd')
+                
+                if not region_code or not deal_ymd:
+                    return jsonify({'success': False, 'message': '지역코드와 거래년월이 필요합니다.'})
+                
+                # 직접 API 호출
+                self.logger.info(f"직접 API 테스트: 지역코드={region_code}, 거래년월={deal_ymd}")
+                result = self.molit_api.get_apt_trade_data(region_code, deal_ymd)
+                
+                # 원본 XML 응답도 가져오기
+                raw_xml = self.molit_api._get_raw_xml_response(region_code, deal_ymd)
+                
+                return jsonify({
+                    'success': True,
+                    'data': result.get('data', []),
+                    'raw_xml': raw_xml,
+                    'summary': {
+                        'region_code': region_code,
+                        'deal_ymd': deal_ymd,
+                        'total_count': len(result.get('data', [])),
+                        'http_status': result.get('http_status', 'Unknown'),
+                        'api_success': result.get('success', False)
+                    }
+                })
+                
+            except Exception as e:
+                self.logger.error(f"직접 API 테스트 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/test')
+        def api_test_page():
+            """API 테스트 페이지"""
+            return render_template('api_test.html')
+        
+        @self.app.route('/test-simple')
+        def test_simple():
+            """간단한 테스트 페이지"""
+            return "API 테스트 페이지가 작동합니다!"
+        
+        self.logger.info("라우트 설정 완료")
+
 
     def run(self, host=None, port=None, debug=None):
         """웹 서버 실행"""
