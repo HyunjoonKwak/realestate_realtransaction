@@ -62,6 +62,27 @@ class ApartmentTrackerApp:
 
     def setup_routes(self):
         """라우트 설정"""
+        
+        # 템플릿 함수 등록
+        @self.app.template_filter('getPriceChangeClass')
+        def get_price_change_class(price_change):
+            """가격 변동률에 따른 CSS 클래스 반환"""
+            if price_change > 0:
+                return "text-success"
+            elif price_change < 0:
+                return "text-danger"
+            else:
+                return "text-muted"
+        
+        @self.app.template_filter('getPriceChangeIcon')
+        def get_price_change_icon(price_change):
+            """가격 변동률에 따른 아이콘 반환"""
+            if price_change > 0:
+                return "↗"
+            elif price_change < 0:
+                return "↘"
+            else:
+                return "→"
 
         @self.app.route('/')
         def index():
