@@ -78,7 +78,23 @@ class ApartmentDatabase:
                         UNIQUE(apt_name, apt_seq, deal_date, deal_amount)
                     )
                 ''')
-                
+
+                # 전월세 관련 컬럼 추가 (기존 테이블에 없는 경우에만)
+                try:
+                    cursor.execute("ALTER TABLE transaction_data ADD COLUMN transaction_type TEXT DEFAULT '매매'")
+                except sqlite3.OperationalError:
+                    pass  # 컬럼이 이미 존재함
+
+                try:
+                    cursor.execute("ALTER TABLE transaction_data ADD COLUMN deposit INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass  # 컬럼이 이미 존재함
+
+                try:
+                    cursor.execute("ALTER TABLE transaction_data ADD COLUMN monthly_rent INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass  # 컬럼이 이미 존재함
+
                 # 가격 변동 알림 테이블
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS price_alerts (
@@ -241,12 +257,13 @@ class ApartmentDatabase:
                 for tx in transactions:
                     try:
                         cursor.execute('''
-                            INSERT OR IGNORE INTO transaction_data 
+                            INSERT OR IGNORE INTO transaction_data
                             (apt_name, apt_seq, region_code, region_name, deal_date,
                              deal_year, deal_month, deal_day, deal_amount, exclusive_area,
                              price_per_area, floor, build_year, road_name, road_name_bonbun,
-                             road_name_bubun, umd_nm, buyer_gbn, sler_gbn, dealing_gbn)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             road_name_bubun, umd_nm, buyer_gbn, sler_gbn, dealing_gbn,
+                             transaction_type, deposit, monthly_rent)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             tx.get('apt_name', ''),
                             tx.get('apt_seq', ''),
@@ -267,7 +284,10 @@ class ApartmentDatabase:
                             tx.get('umd_nm', ''),
                             tx.get('buyer_gbn', ''),
                             tx.get('sler_gbn', ''),
-                            tx.get('dealing_gbn', '')
+                            tx.get('dealing_gbn', ''),
+                            tx.get('transaction_type', '매매'),
+                            tx.get('deposit', 0),
+                            tx.get('monthly_rent', 0)
                         ))
                         saved_count += 1
                         

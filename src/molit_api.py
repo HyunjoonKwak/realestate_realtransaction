@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 import time
 import os
 from functools import wraps
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class MolitRealEstateAPI:
     """국토교통부 부동산 실거래가 API 클래스"""
@@ -26,9 +27,11 @@ class MolitRealEstateAPI:
         
         self.service_key = service_key
         self.base_url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
+        self.rent_base_url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
+        self.rent_url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
 
         # 환경 변수에서 설정 로드
-        self.request_delay = float(os.getenv('API_REQUEST_DELAY', '0.1'))
+        self.request_delay = float(os.getenv('API_REQUEST_DELAY', '0.05'))
         self.timeout = int(os.getenv('API_TIMEOUT', '15'))
         self.max_retries = int(os.getenv('API_MAX_RETRIES', '3'))
 
@@ -442,7 +445,7 @@ class MolitRealEstateAPI:
         """지역코드로 지역명 조회"""
         return self.region_codes.get(region_code, f"지역코드 {region_code}")
 
-    def get_apt_trade_data(self, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 100) -> Dict:
+    def get_apt_trade_data(self, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000) -> Dict:
         """
         아파트 실거래가 데이터 조회
 
@@ -600,6 +603,7 @@ class MolitRealEstateAPI:
                     'bubun': self._get_xml_text(item, 'bubun'),
                     'build_year': build_year,
                     'buyer_gbn': self._get_xml_text(item, 'buyerGbn'),
+                    'cdeal_type': self._get_xml_text(item, 'cdealType'),
                     'deal_amount': deal_amount,
                     'deal_day': deal_day,
                     'deal_month': deal_month,
@@ -609,6 +613,7 @@ class MolitRealEstateAPI:
                     'exclusive_area': exclusive_area,
                     'floor': floor,
                     'jibun': self._get_xml_text(item, 'jibun'),
+                    'rgs_date': self._get_xml_text(item, 'rgsDate'),
                     'road_name': self._get_xml_text(item, 'roadNm'),
                     'road_name_bonbun': self._get_xml_text(item, 'roadNmBonbun'),
                     'road_name_bubun': self._get_xml_text(item, 'roadNmBubun'),
@@ -644,7 +649,13 @@ class MolitRealEstateAPI:
                     'message': '해당 기간에 거래 데이터가 없습니다.'
                 }
             else:
-                self.logger.info(f"✅ {len(transactions)}건의 실거래 데이터 수집완료 (총 {total_count_value}건)")
+                self.logger.info(f"✅ {len(transactions)}건의 실거래 데이터 수집완료 (API 총 {total_count_value}건)")
+
+                # totalCount와 파싱된 데이터 개수 차이 로깅
+                if total_count_value > len(transactions):
+                    self.logger.warning(f"⚠️ totalCount({total_count_value})와 파싱된 데이터({len(transactions)})에 차이가 있습니다.")
+                    self.logger.warning("일부 데이터가 파싱 중 스킵되었을 수 있습니다.")
+
                 if transactions:
                     # 거래 데이터 요약 정보 표시
                     apt_names = list(set([tx.get('apt_name', '') for tx in transactions if tx.get('apt_name')]))
@@ -662,6 +673,7 @@ class MolitRealEstateAPI:
                     'success': True,
                     'data': transactions,
                     'total_count': total_count_value,
+                    'parsed_count': len(transactions),  # 실제 파싱된 개수 추가
                     'region_code': lawd_cd,
                     'region_name': self.get_region_name(lawd_cd),
                     'deal_ymd': deal_ymd
@@ -676,6 +688,112 @@ class MolitRealEstateAPI:
                 'total_count': 0
             }
 
+    def get_all_apt_trade_data(self, lawd_cd: str, deal_ymd: str, num_of_rows: int = 1000) -> Dict:
+        """
+        아파트 매매 전체 데이터 조회 (모든 페이지)
+
+        Args:
+            lawd_cd: 지역코드
+            deal_ymd: 거래년월
+            num_of_rows: 페이지당 조회 건수 (최대 1000)
+
+        Returns:
+            전체 매매 데이터 딕셔너리
+        """
+        all_transactions = []
+        page_no = 1
+        total_count_from_api = 0
+
+        while True:
+            # 페이지별 데이터 조회
+            result = self.get_apt_trade_data(lawd_cd, deal_ymd, page_no, num_of_rows)
+
+            if not result.get('success'):
+                self.logger.error(f"매매 데이터 조회 실패 (페이지 {page_no}): {result.get('error')}")
+                break
+
+            transactions = result.get('data', [])
+            if not transactions:
+                # 더 이상 데이터가 없으면 종료
+                break
+
+            all_transactions.extend(transactions)
+
+            # 첫 페이지에서 전체 건수 확인
+            if page_no == 1:
+                total_count_from_api = result.get('total_count', 0)
+                self.logger.info(f"📊 매매 데이터 전체 건수: {total_count_from_api}건, 페이지당 {num_of_rows}건씩 수집")
+
+            # 수집된 데이터가 전체 건수와 같거나 페이지당 데이터가 num_of_rows보다 적으면 종료
+            if len(all_transactions) >= total_count_from_api or len(transactions) < num_of_rows:
+                break
+
+            page_no += 1
+            self.logger.info(f"📄 매매 데이터 페이지 {page_no} 수집 중... (현재까지 {len(all_transactions)}건)")
+
+        self.logger.info(f"✅ 매매 데이터 전체 수집 완료: {len(all_transactions)}건 (API 총 {total_count_from_api}건)")
+
+        return {
+            'success': True,
+            'data': all_transactions,
+            'total_count': len(all_transactions),
+            'api_total_count': total_count_from_api,
+            'pages_fetched': page_no
+        }
+
+    def get_all_apt_rent_data(self, lawd_cd: str, deal_ymd: str, num_of_rows: int = 1000) -> Dict:
+        """
+        아파트 전월세 전체 데이터 조회 (모든 페이지)
+
+        Args:
+            lawd_cd: 지역코드
+            deal_ymd: 거래년월
+            num_of_rows: 페이지당 조회 건수 (최대 1000)
+
+        Returns:
+            전체 전월세 데이터 딕셔너리
+        """
+        all_transactions = []
+        page_no = 1
+        total_count_from_api = 0
+
+        while True:
+            # 페이지별 데이터 조회
+            result = self.get_apt_rent_data(lawd_cd, deal_ymd, page_no, num_of_rows)
+
+            if not result.get('success'):
+                self.logger.error(f"전월세 데이터 조회 실패 (페이지 {page_no}): {result.get('error')}")
+                break
+
+            transactions = result.get('data', [])
+            if not transactions:
+                # 더 이상 데이터가 없으면 종료
+                break
+
+            all_transactions.extend(transactions)
+
+            # 첫 페이지에서 전체 건수 확인
+            if page_no == 1:
+                total_count_from_api = result.get('total_count', 0)
+                self.logger.info(f"📊 전월세 데이터 전체 건수: {total_count_from_api}건, 페이지당 {num_of_rows}건씩 수집")
+
+            # 수집된 데이터가 전체 건수와 같거나 페이지당 데이터가 num_of_rows보다 적으면 종료
+            if len(all_transactions) >= total_count_from_api or len(transactions) < num_of_rows:
+                break
+
+            page_no += 1
+            self.logger.info(f"📄 전월세 데이터 페이지 {page_no} 수집 중... (현재까지 {len(all_transactions)}건)")
+
+        self.logger.info(f"✅ 전월세 데이터 전체 수집 완료: {len(all_transactions)}건 (API 총 {total_count_from_api}건)")
+
+        return {
+            'success': True,
+            'data': all_transactions,
+            'total_count': len(all_transactions),
+            'api_total_count': total_count_from_api,
+            'pages_fetched': page_no
+        }
+
     def get_multiple_months_data(self, lawd_cd: str, months: int = 6, start_date: str = None, end_date: str = None) -> List[Dict]:
         """여러 개월 실거래 데이터 조회"""
         all_transactions = []
@@ -688,17 +806,17 @@ class MolitRealEstateAPI:
             current = start.replace(day=1)  # 월의 첫째 날로 설정
             while current <= end:
                 deal_ymd = current.strftime("%Y%m")
-                result = self.get_apt_trade_data(lawd_cd, deal_ymd)
+                result = self.get_combined_apt_data(lawd_cd, deal_ymd)
                 if result['success']:
                     # 날짜 범위에 맞는 데이터만 필터링
                     filtered_data = [
-                        tx for tx in result['data'] 
+                        tx for tx in result['data']
                         if start <= datetime.strptime(tx['deal_date'], "%Y-%m-%d") <= end
                     ]
                     all_transactions.extend(filtered_data)
-                    self.logger.info(f"{deal_ymd} 데이터 {len(filtered_data)}건 수집 (날짜 범위 필터링)")
+                    self.logger.info(f"{deal_ymd} 통합 데이터 {len(filtered_data)}건 수집 (날짜 범위 필터링)")
                 else:
-                    self.logger.warning(f"{deal_ymd} 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
+                    self.logger.warning(f"{deal_ymd} 통합 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
                 
                 # 다음 달로 이동
                 if current.month == 12:
@@ -721,12 +839,66 @@ class MolitRealEstateAPI:
                 target_date = datetime(year, month, 1)
                 deal_ymd = target_date.strftime("%Y%m")
 
-                result = self.get_apt_trade_data(lawd_cd, deal_ymd)
+                result = self.get_combined_apt_data(lawd_cd, deal_ymd)
                 if result['success']:
                     all_transactions.extend(result['data'])
-                    self.logger.info(f"{deal_ymd} 데이터 {len(result['data'])}건 수집")
+                    self.logger.info(f"{deal_ymd} 통합 데이터 {len(result['data'])}건 수집")
                 else:
-                    self.logger.warning(f"{deal_ymd} 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
+                    self.logger.warning(f"{deal_ymd} 통합 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
+
+        return all_transactions
+
+    def get_multiple_months_rent_data(self, lawd_cd: str, months: int = 6, start_date: str = None, end_date: str = None) -> List[Dict]:
+        """여러 개월 전월세 데이터 조회"""
+        all_transactions = []
+
+        if start_date and end_date:
+            # 날짜 범위로 조회
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+
+            current = start.replace(day=1)  # 월의 첫째 날로 설정
+            while current <= end:
+                deal_ymd = current.strftime("%Y%m")
+                result = self.get_apt_rent_data(lawd_cd, deal_ymd)
+                if result['success']:
+                    # 날짜 범위에 맞는 데이터만 필터링
+                    filtered_data = [
+                        tx for tx in result['data']
+                        if start <= datetime.strptime(tx['deal_date'], "%Y-%m-%d") <= end
+                    ]
+                    all_transactions.extend(filtered_data)
+                    self.logger.info(f"{deal_ymd} 전월세 데이터 {len(filtered_data)}건 수집 (날짜 범위 필터링)")
+                else:
+                    self.logger.warning(f"{deal_ymd} 전월세 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
+
+                # 다음 달로 이동
+                if current.month == 12:
+                    current = current.replace(year=current.year + 1, month=1)
+                else:
+                    current = current.replace(month=current.month + 1)
+        else:
+            # 기존 방식: 개월 수로 조회 - 정확한 월별 계산
+            current_date = datetime.now()
+            for i in range(months):
+                # 현재월부터 과거로 정확히 월 단위로 거슬러 올라감
+                year = current_date.year
+                month = current_date.month - i
+
+                # 월이 0 이하가 되면 이전 연도로 이동
+                while month <= 0:
+                    month += 12
+                    year -= 1
+
+                target_date = datetime(year, month, 1)
+                deal_ymd = target_date.strftime("%Y%m")
+
+                result = self.get_apt_rent_data(lawd_cd, deal_ymd)
+                if result['success']:
+                    all_transactions.extend(result['data'])
+                    self.logger.info(f"{deal_ymd} 전월세 데이터 {len(result['data'])}건 수집")
+                else:
+                    self.logger.warning(f"{deal_ymd} 전월세 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
 
         return all_transactions
 
@@ -788,6 +960,7 @@ class MolitRealEstateAPI:
                     'bubun': '0000',
                     'build_year': random.randint(2015, 2023),
                     'buyer_gbn': '개인',
+                    'cdeal_type': '정상',
                     'deal_amount': total_price,
                     'deal_day': random.randint(1, 28),
                     'deal_month': month,
@@ -797,6 +970,7 @@ class MolitRealEstateAPI:
                     'exclusive_area': area,
                     'floor': random.randint(3, 25),
                     'jibun': f"{random.randint(1, 999)}",
+                    'rgs_date': f"{year}{month:02d}{random.randint(1, 28):02d}",
                     'road_name': '테스트로',
                     'road_name_bonbun': f"{random.randint(1, 999):05d}",
                     'road_name_bubun': '00000',
@@ -846,6 +1020,13 @@ class MolitRealEstateAPI:
             # MOLIT API의 dealAmount는 만원 단위로 제공됨
             # 예: "154,500" -> 154,500만원 (15억 4천 5백만원)
             return int(amount_str.replace(',', '').strip())
+        except:
+            return 0
+
+    def _safe_int(self, value_str: str) -> int:
+        """안전한 정수 변환 (쉼표 제거)"""
+        try:
+            return int(value_str.replace(',', '').strip()) if value_str else 0
         except:
             return 0
 
@@ -954,3 +1135,361 @@ class MolitRealEstateAPI:
         except Exception as e:
             self.logger.error(f"원본 XML 응답 조회 실패: {e}")
             return f"XML 응답 조회 실패: {str(e)}"
+
+    def _get_raw_rental_xml_response(self, lawd_cd: str, deal_ymd: str) -> str:
+        """전월세 원본 XML 응답 반환 (테스트용)"""
+        try:
+            # 전월세 API URL 사용
+            params = {
+                'serviceKey': self.service_key,
+                'LAWD_CD': lawd_cd,
+                'DEAL_YMD': deal_ymd,
+                'numOfRows': 1000,
+                'pageNo': 1
+            }
+
+            response = self.session.get(self.rent_url, params=params, timeout=30)
+            self.logger.info(f"📡 전월세 원본 XML 요청: {self.rent_url}")
+            self.logger.info(f"📋 요청 파라미터:")
+            self.logger.info(f"   - 지역코드(LAWD_CD): {lawd_cd}")
+            self.logger.info(f"   - 거래년월(DEAL_YMD): {deal_ymd}")
+            self.logger.info(f"   - 조회건수(numOfRows): {params['numOfRows']}")
+            self.logger.info(f"   - 페이지번호(pageNo): {params['pageNo']}")
+            self.logger.info(f"🌐 HTTP 상태코드: {response.status_code}")
+
+            return response.text
+
+        except Exception as e:
+            self.logger.error(f"전월세 원본 XML 응답 조회 실패: {e}")
+            return f"전월세 XML 응답 조회 실패: {str(e)}"
+
+    def get_apt_rent_data(self, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 1000) -> Dict:
+        """
+        아파트 전월세 거래 데이터 조회
+
+        Args:
+            lawd_cd: 지역코드 (예: 11110)
+            deal_ymd: 거래년월 (예: 202506)
+            page_no: 페이지 번호 (기본값: 1)
+            num_of_rows: 한 페이지 결과 수 (기본값: 100)
+
+        Returns:
+            전월세 거래 데이터 딕셔너리
+        """
+        try:
+            # Rate Limiting 적용
+            self._rate_limit()
+
+            # API URL 구성
+            url = f"{self.rent_base_url}?serviceKey={self.service_key}&LAWD_CD={lawd_cd}&DEAL_YMD={deal_ymd}&pageNo={page_no}&numOfRows={num_of_rows}"
+
+            self.logger.info(f"🏠 국토교통부 전월세 API 호출: 지역={lawd_cd}({self.get_region_name(lawd_cd)}), 기간={deal_ymd}")
+            self.logger.info(f"📊 요청 파라미터: 페이지={page_no}, 조회건수={num_of_rows}")
+            self.logger.debug(f"🔗 전체 URL: {url}")
+
+            # 재사용 가능한 세션 사용
+            # SSL 검증으로 먼저 시도
+            try:
+                response = self.session.get(url, timeout=self.timeout)
+            except requests.exceptions.SSLError as ssl_error:
+                self.logger.warning(f"SSL 인증서 오류 발생, 인증서 검증 비활성화로 재시도: {ssl_error}")
+                # SSL 오류 시에만 검증 비활성화
+                import urllib3
+                original_verify = self.session.verify
+                self.session.verify = False
+                try:
+                    with urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning):
+                        response = self.session.get(url, timeout=self.timeout)
+                finally:
+                    # 원래 설정 복원
+                    self.session.verify = original_verify
+            except requests.exceptions.ConnectionError as conn_error:
+                self.logger.error(f"연결 오류: {conn_error}")
+                raise
+
+            # 응답 상태 확인
+            self.logger.info(f"HTTP 상태코드: {response.status_code}")
+
+            if response.status_code == 200:
+                return self._parse_rent_xml_response(response.text, lawd_cd, deal_ymd)
+            else:
+                self.logger.error(f"HTTP 오류: {response.status_code}")
+                return {
+                    'success': False,
+                    'error': f'HTTP 오류: {response.status_code}',
+                    'data': [],
+                    'total_count': 0
+                }
+
+        except Exception as e:
+            self.logger.error(f"전월세 API 호출 실패: {e}")
+            self.logger.info("전월세 데모 데이터로 대체합니다.")
+            return self._get_demo_rent_data(lawd_cd, deal_ymd)
+
+    def _parse_rent_xml_response(self, xml_content: str, lawd_cd: str, deal_ymd: str) -> Dict:
+        """전월세 XML 응답 파싱"""
+        try:
+            root = ET.fromstring(xml_content)
+
+            # 결과 코드 확인
+            result_code = root.find('.//resultCode')
+            result_msg = root.find('.//resultMsg')
+
+            if result_code is not None and result_code.text and result_code.text != '000':
+                error_msg = result_msg.text if result_msg is not None else '알 수 없는 오류'
+                self.logger.error(f"전월세 API 오류: {error_msg}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'data': [],
+                    'total_count': 0
+                }
+
+            # 데이터 파싱
+            items = root.findall('.//item')
+            transactions = []
+            skipped_count = 0
+
+            for item in items:
+                try:
+                    deal_year = int(self._get_xml_text(item, 'dealYear', '0'))
+                    deal_month = int(self._get_xml_text(item, 'dealMonth', '0'))
+                    deal_day = int(self._get_xml_text(item, 'dealDay', '0'))
+
+                    if not (1900 <= deal_year <= 2100):
+                        skipped_count += 1
+                        self.logger.debug(f"전월세 데이터 스킵: 유효하지 않은 거래년도 {deal_year}")
+                        continue
+                    if not (1 <= deal_month <= 12):
+                        skipped_count += 1
+                        self.logger.debug(f"전월세 데이터 스킵: 유효하지 않은 거래월 {deal_month}")
+                        continue
+                    if not (1 <= deal_day <= 31):
+                        skipped_count += 1
+                        self.logger.debug(f"전월세 데이터 스킵: 유효하지 않은 거래일 {deal_year}-{deal_month}-{deal_day}")
+                        continue
+
+                    deal_date = f"{deal_year}-{deal_month:02d}-{deal_day:02d}"
+
+                    # 전월세 특화 필드 파싱
+                    deposit = self._get_xml_text(item, 'deposit', '0')  # 보증금(만원)
+                    monthly_rent = self._get_xml_text(item, 'monthlyRent', '0')  # 월세(만원)
+
+                    # 전세/월세 구분 (월세가 0이면 전세)
+                    transaction_type = "전세" if self._safe_int(monthly_rent) == 0 else "월세"
+
+                    transaction = {
+                        'apt_name': self._get_xml_text(item, 'aptNm', ''),
+                        'build_year': int(self._get_xml_text(item, 'buildYear', '0')),
+                        'contract_term': self._get_xml_text(item, 'contractTerm', ''),
+                        'contract_type': self._get_xml_text(item, 'contractType', ''),
+                        'deal_date': deal_date,
+                        'dong': self._get_xml_text(item, 'dong', ''),
+                        'exclusive_area': float(self._get_xml_text(item, 'excluUseAr', '0')),
+                        'floor': self._get_xml_text(item, 'floor', ''),
+                        'pre_deposit': self._get_xml_text(item, 'preDeposit', ''),
+                        'pre_monthly_rent': self._get_xml_text(item, 'preMonthlyRent', ''),
+                        'region_code': lawd_cd,
+                        'road_name': self._get_xml_text(item, 'roadNm', ''),
+                        'road_name_bonbun': self._get_xml_text(item, 'roadNmBonbun', ''),
+                        'road_name_bubun': self._get_xml_text(item, 'roadNmBubun', ''),
+                        'umd_nm': self._get_xml_text(item, 'umdNm', ''),  # 법정동명 추가
+                        'use_rr_right': self._get_xml_text(item, 'useRRRight', ''),
+
+                        # 전월세 특화 필드
+                        'deposit': self._safe_int(deposit),  # 보증금(만원)
+                        'monthly_rent': self._safe_int(monthly_rent),  # 월세(만원)
+                        'transaction_type': transaction_type,  # 전세/월세
+
+                        # 호환성을 위한 필드
+                        'deal_amount': self._safe_int(deposit),  # 보증금을 거래금액으로 사용
+                        'price_per_area': 0  # 전월세는 평당가격 계산하지 않음
+                    }
+
+                    transactions.append(transaction)
+
+                except (ValueError, TypeError) as e:
+                    skipped_count += 1
+                    self.logger.warning(f"전월세 거래 데이터 파싱 실패: {e}")
+                    continue
+
+            # 총 개수 확인 (API에서 제공하는 totalCount 사용)
+            total_count_element = root.find('.//totalCount')
+            total_count_value = int(total_count_element.text) if total_count_element is not None else len(transactions)
+
+            self.logger.info(f"✅ 전월세 데이터 파싱 완료: {len(transactions)}건 파싱 (API 총 {total_count_value}건, 스킵 {skipped_count}건)")
+
+            # totalCount와 파싱된 데이터 개수 차이 로깅
+            if total_count_value > len(transactions):
+                self.logger.warning(f"⚠️ totalCount({total_count_value})와 파싱된 데이터({len(transactions)})에 차이가 있습니다.")
+                self.logger.warning(f"파싱 중 스킵된 데이터: {skipped_count}건")
+                expected_parsed = total_count_value - skipped_count
+                if expected_parsed != len(transactions):
+                    self.logger.warning(f"예상 파싱 건수({expected_parsed})와 실제 파싱 건수({len(transactions)})가 다릅니다.")
+
+            return {
+                'success': True,
+                'data': transactions,
+                'total_count': total_count_value,  # API에서 제공하는 값 사용
+                'parsed_count': len(transactions),  # 실제 파싱된 개수 추가
+                'region_code': lawd_cd,
+                'period': deal_ymd
+            }
+
+        except ET.ParseError as e:
+            self.logger.error(f"전월세 XML 파싱 오류: {e}")
+            return {
+                'success': False,
+                'error': f'XML 파싱 오류: {e}',
+                'data': [],
+                'total_count': 0
+            }
+
+    def _get_demo_rent_data(self, lawd_cd: str, deal_ymd: str) -> Dict:
+        """전월세 데모 데이터 생성"""
+        demo_transactions = [
+            {
+                'apt_name': '데모아파트',
+                'build_year': 2015,
+                'contract_term': '2년',
+                'contract_type': '자동갱신',
+                'deal_date': '2024-12-01',
+                'dong': '데모동',
+                'exclusive_area': 84.5,
+                'floor': '10',
+                'pre_deposit': '45000',
+                'pre_monthly_rent': '0',
+                'region_code': lawd_cd,
+                'road_name': '데모로',
+                'road_name_bonbun': '123',
+                'road_name_bubun': '',
+                'umd_nm': '데모동',  # 법정동명 추가
+                'use_rr_right': 'Y',
+                'deposit': 50000,  # 보증금 5억
+                'monthly_rent': 0,  # 전세
+                'transaction_type': '전세',
+                'deal_amount': 50000,
+                'price_per_area': 0
+            },
+            {
+                'apt_name': '데모아파트',
+                'build_year': 2015,
+                'contract_term': '1년',
+                'contract_type': '일반계약',
+                'deal_date': '2024-12-02',
+                'dong': '데모동',
+                'exclusive_area': 74.2,
+                'floor': '5',
+                'pre_deposit': '18000',
+                'pre_monthly_rent': '120',
+                'region_code': lawd_cd,
+                'road_name': '데모로',
+                'road_name_bonbun': '123',
+                'road_name_bubun': '',
+                'umd_nm': '데모동',  # 법정동명 추가
+                'use_rr_right': 'N',
+                'deposit': 20000,  # 보증금 2억
+                'monthly_rent': 150,  # 월세 150만원
+                'transaction_type': '월세',
+                'deal_amount': 20000,
+                'price_per_area': 0
+            }
+        ]
+
+        self.logger.info(f"📊 전월세 데모 데이터 생성: 총 {len(demo_transactions)}건")
+
+        return {
+            'success': True,
+            'data': demo_transactions,
+            'total_count': len(demo_transactions),
+            'region_code': lawd_cd,
+            'period': deal_ymd,
+            'demo': True
+        }
+
+    def get_combined_apt_data(self, lawd_cd: str, deal_ymd: str, page_no: int = 1, num_of_rows: int = 100, fetch_all: bool = True) -> Dict:
+        """
+        아파트 매매 + 전월세 통합 조회
+
+        Args:
+            lawd_cd: 지역코드 (예: 11110)
+            deal_ymd: 거래년월 (예: 202506)
+            page_no: 페이지 번호 (기본값: 1)
+            num_of_rows: 한 페이지 결과 수 (기본값: 100)
+            fetch_all: 전체 데이터 수집 여부 (기본값: True)
+
+        Returns:
+            매매 + 전월세 통합 데이터 딕셔너리
+        """
+        self.logger.info(f"🏡 통합 아파트 데이터 조회 시작: 지역={lawd_cd}, 기간={deal_ymd}")
+
+        if fetch_all:
+            # 전체 데이터 수집 - 병렬 처리
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                self.logger.info(f"🔄 매매/전월세 데이터 병렬 수집 시작")
+                # 병렬로 매매와 전월세 데이터 수집
+                sale_future = executor.submit(self.get_all_apt_trade_data, lawd_cd, deal_ymd, num_of_rows)
+                rent_future = executor.submit(self.get_all_apt_rent_data, lawd_cd, deal_ymd, num_of_rows)
+
+                # 결과 대기
+                sale_data = sale_future.result()
+                rent_data = rent_future.result()
+                self.logger.info(f"✅ 매매/전월세 데이터 병렬 수집 완료")
+        else:
+            # 단일 페이지 데이터 수집 - 병렬 처리
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                sale_future = executor.submit(self.get_apt_trade_data, lawd_cd, deal_ymd, page_no, num_of_rows)
+                rent_future = executor.submit(self.get_apt_rent_data, lawd_cd, deal_ymd, page_no, num_of_rows)
+
+                sale_data = sale_future.result()
+                rent_data = rent_future.result()
+
+        # 매매 데이터에 거래 유형 추가
+        sale_transactions = []
+        if sale_data.get('success') and sale_data.get('data'):
+            for transaction in sale_data['data']:
+                transaction['transaction_type'] = '매매'
+                transaction['deposit'] = 0
+                transaction['monthly_rent'] = 0
+                sale_transactions.append(transaction)
+
+        # 전월세 데이터 가져오기
+        rent_transactions = []
+        if rent_data.get('success') and rent_data.get('data'):
+            rent_transactions = rent_data['data']
+
+        # 데이터 통합
+        all_transactions = sale_transactions + rent_transactions
+
+        # 날짜순 정렬
+        all_transactions.sort(key=lambda x: x['deal_date'], reverse=True)
+
+        total_count = len(all_transactions)
+        sale_count = len(sale_transactions)
+        rent_count = len(rent_transactions)
+
+        # API 전체 데이터 수 정보 추가
+        sale_api_total = sale_data.get('api_total_count', sale_data.get('total_count', 0))
+        rent_api_total = rent_data.get('api_total_count', rent_data.get('total_count', 0))
+        total_api_count = sale_api_total + rent_api_total
+
+        if fetch_all:
+            self.logger.info(f"✅ 통합 데이터 전체 조회 완료: 총 {total_count}건 (매매 {sale_count}건, 전월세 {rent_count}건)")
+            self.logger.info(f"📊 API 전체 데이터: 총 {total_api_count}건 (매매 {sale_api_total}건, 전월세 {rent_api_total}건)")
+        else:
+            self.logger.info(f"✅ 통합 데이터 조회 완료: 총 {total_count}건 (매매 {sale_count}건, 전월세 {rent_count}건)")
+
+        return {
+            'success': True,
+            'data': all_transactions,
+            'total_count': total_count,
+            'sale_count': sale_count,
+            'rent_count': rent_count,
+            'api_total_count': total_api_count,
+            'sale_api_total': sale_api_total,
+            'rent_api_total': rent_api_total,
+            'region_code': lawd_cd,
+            'period': deal_ymd,
+            'sale_data': sale_data,
+            'rent_data': rent_data
+        }

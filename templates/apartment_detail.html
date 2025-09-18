@@ -69,32 +69,79 @@
                 </h5>
             </div>
             <div class="card-body">
-                <div class="row">
-                    <div class="col-md-3">
-                        <div class="text-center">
-                            <div class="h3 text-primary mb-0" id="avgPrice">{{ "%.0f"|format(price_trend.summary.avg_price) }}만원</div>
-                            <small class="text-muted">평균 거래가격</small>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="text-center">
-                            <div class="h3 text-success mb-0" id="minPrice">{{ "%.0f"|format(price_trend.summary.min_price) }}만원</div>
-                            <small class="text-muted">최저 거래가격</small>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="text-center">
-                            <div class="h3 text-danger mb-0" id="maxPrice">{{ "%.0f"|format(price_trend.summary.max_price) }}만원</div>
-                            <small class="text-muted">최고 거래가격</small>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="text-center">
-                            <div class="h3 {{ price_trend.summary.price_change|getPriceChangeClass }} mb-0">
-                                {{ price_trend.summary.price_change|getPriceChangeIcon }}
-                                {{ "%.1f"|format(price_trend.summary.price_change) }}%
+                <!-- 가격 동향 탭 네비게이션 -->
+                <ul class="nav nav-pills mb-3" id="priceTrendTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="sale-summary-tab" data-bs-toggle="pill" data-bs-target="#sale-summary" type="button" role="tab">
+                            <i class="fas fa-home me-1"></i>매매 가격동향
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="rent-summary-tab" data-bs-toggle="pill" data-bs-target="#rent-summary" type="button" role="tab">
+                            <i class="fas fa-key me-1"></i>전월세 가격동향
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- 가격 동향 탭 컨텐츠 -->
+                <div class="tab-content" id="priceTrendTabContent">
+                    <!-- 매매 가격동향 -->
+                    <div class="tab-pane fade show active" id="sale-summary" role="tabpanel">
+                        <div class="row" id="saleSummaryContent">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-primary mb-0" id="saleAvgPrice">계산 중...</div>
+                                    <small class="text-muted">평균 거래가격</small>
+                                </div>
                             </div>
-                            <small class="text-muted">가격 변동률</small>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-success mb-0" id="saleMinPrice">계산 중...</div>
+                                    <small class="text-muted">최저 거래가격</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-danger mb-0" id="saleMaxPrice">계산 중...</div>
+                                    <small class="text-muted">최고 거래가격</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 mb-0" id="saleChangeRate">계산 중...</div>
+                                    <small class="text-muted">가격 변동률</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 전월세 가격동향 -->
+                    <div class="tab-pane fade" id="rent-summary" role="tabpanel">
+                        <div class="row" id="rentSummaryContent">
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-primary mb-0" id="rentAvgDeposit">계산 중...</div>
+                                    <small class="text-muted">평균 보증금</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-info mb-0" id="rentAvgMonthly">계산 중...</div>
+                                    <small class="text-muted">평균 월세</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-success mb-0" id="rentMinDeposit">계산 중...</div>
+                                    <small class="text-muted">최저 보증금</small>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-center">
+                                    <div class="h3 text-danger mb-0" id="rentMaxDeposit">계산 중...</div>
+                                    <small class="text-muted">최고 보증금</small>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -141,29 +188,71 @@
             </div>
             <div class="card-body">
                 {% if transactions %}
-                <div class="table-responsive">
-                    <table class="table table-hover" id="transactionTable">
-                        <thead class="table-light">
-                            <tr>
-                                <th>거래일</th>
-                                <th>전용면적</th>
-                                <th>거래금액</th>
-                                <th>평당가격</th>
-                                <th>층</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for tx in transactions %}
-                            <tr>
-                                <td>{{ tx.deal_date }}</td>
-                                <td>{{ "%.1f"|format(tx.exclusive_area) }}㎡</td>
-                                <td>{{ "{:,}".format(tx.deal_amount) }}만원</td>
-                                <td><strong>{{ "%.0f"|format(tx.price_per_area / 10000) }}만원</strong></td>
-                                <td>{{ tx.floor }}층</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                <!-- 탭 네비게이션 -->
+                <ul class="nav nav-tabs mb-3" id="transactionTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="sale-tab" data-bs-toggle="tab" data-bs-target="#sale-pane" type="button" role="tab">
+                            <i class="fas fa-home me-1"></i>매매 (<span id="saleCount">0</span>건)
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="rent-tab" data-bs-toggle="tab" data-bs-target="#rent-pane" type="button" role="tab">
+                            <i class="fas fa-key me-1"></i>전월세 (<span id="rentCount">0</span>건)
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- 탭 컨텐츠 -->
+                <div class="tab-content" id="transactionTabContent">
+                    <!-- 매매 탭 -->
+                    <div class="tab-pane fade show active" id="sale-pane" role="tabpanel">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="saleTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>거래일</th>
+                                        <th>거래유형</th>
+                                        <th>등기일자</th>
+                                        <th>아파트동명</th>
+                                        <th>해제여부</th>
+                                        <th>전용면적</th>
+                                        <th>거래금액</th>
+                                        <th>평당가격</th>
+                                        <th>층</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="saleTableBody">
+                                    <!-- JavaScript로 채워짐 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 전월세 탭 -->
+                    <div class="tab-pane fade" id="rent-pane" role="tabpanel">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="rentTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>거래일</th>
+                                        <th>계약기간</th>
+                                        <th>계약구분</th>
+                                        <th>갱신요구권사용</th>
+                                        <th>종전보증금</th>
+                                        <th>종전월세</th>
+                                        <th>유형</th>
+                                        <th>전용면적</th>
+                                        <th>보증금</th>
+                                        <th>월세</th>
+                                        <th>층</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="rentTableBody">
+                                    <!-- JavaScript로 채워짐 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
                 {% else %}
                 <div class="text-center text-muted py-5">
@@ -189,6 +278,12 @@ $(document).ready(function() {
     {% if price_trend.trend %}
     createPriceChart();
     {% endif %}
+
+    // 거래 내역을 매매와 전월세로 분리하여 표시
+    initializeTransactionTabs();
+
+    // 가격 동향 요약 계산 및 표시
+    calculatePriceSummaries();
 });
 
 function createPriceChart() {
@@ -291,13 +386,16 @@ function exportToCSV() {
     }
 
     // CSV 헤더
-    const headers = ['거래일', '전용면적', '거래금액', '평당가격', '층'];
+    const headers = ['거래일', '거래유형', '전용면적', '거래금액', '평당가격', '층'];
     
     // CSV 데이터
     const csvData = transactions.map(tx => [
         tx.deal_date,
+        tx.transaction_type || '매매',
         tx.exclusive_area,
-        tx.deal_amount,
+        tx.transaction_type === '월세' ?
+            `보증금 ${tx.deposit || tx.deal_amount}만원, 월세 ${tx.monthly_rent || 0}만원` :
+            `${tx.deal_amount}만원`,
         Math.round(tx.price_per_area / 10000),
         tx.floor
     ]);
@@ -321,79 +419,236 @@ function exportToCSV() {
     showToast('CSV 파일이 다운로드되었습니다.', 'success');
 }
 
-// 전용면적 필터링 기능
-let allTransactions = [];
+// 거래 내역 데이터
+let saleTransactions = [];
+let rentTransactions = [];
 
-// 페이지 로드 시 전용면적 옵션 초기화 및 가격 포맷팅
-document.addEventListener('DOMContentLoaded', function() {
-    // 가격 동향 요약 포맷팅
-    const avgPriceEl = document.getElementById('avgPrice');
-    const minPriceEl = document.getElementById('minPrice');
-    const maxPriceEl = document.getElementById('maxPrice');
+// 거래 내역 탭 초기화
+function initializeTransactionTabs() {
+    const transactions = {{ transactions | tojson }};
 
-    if (avgPriceEl) {
-        const avgPrice = parseInt(avgPriceEl.textContent.replace('만원', ''));
-        avgPriceEl.textContent = formatPrice(avgPrice);
-    }
+    // 매매와 전월세 데이터 분리
+    saleTransactions = transactions.filter(tx => (tx.transaction_type || '매매') === '매매');
+    rentTransactions = transactions.filter(tx => (tx.transaction_type || '매매') !== '매매');
 
-    if (minPriceEl) {
-        const minPrice = parseInt(minPriceEl.textContent.replace('만원', ''));
-        minPriceEl.textContent = formatPrice(minPrice);
-    }
+    // 탭 건수 업데이트
+    document.getElementById('saleCount').textContent = saleTransactions.length;
+    document.getElementById('rentCount').textContent = rentTransactions.length;
 
-    if (maxPriceEl) {
-        const maxPrice = parseInt(maxPriceEl.textContent.replace('만원', ''));
-        maxPriceEl.textContent = formatPrice(maxPrice);
-    }
+    // 테이블 데이터 렌더링
+    renderSaleTable();
+    renderRentTable();
 
-    const table = document.getElementById('transactionTable');
-    if (table) {
-        const tbody = table.querySelector('tbody');
-        const rows = Array.from(tbody.querySelectorAll('tr'));
+    // 전용면적 필터 옵션 초기화
+    initializeAreaFilter();
+}
 
-        // 모든 거래 데이터 저장
-        allTransactions = rows.map(row => {
-            const cells = row.querySelectorAll('td');
-            return {
-                element: row,
-                area: parseFloat(cells[1].textContent.replace('㎡', ''))
-            };
-        });
+// 매매 테이블 렌더링
+function renderSaleTable() {
+    const tbody = document.getElementById('saleTableBody');
+    tbody.innerHTML = '';
 
-        // 유니크한 전용면적 목록 생성
-        const uniqueAreas = [...new Set(allTransactions.map(tx => tx.area))].sort((a, b) => a - b);
+    saleTransactions.forEach(tx => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${tx.deal_date}</td>
+            <td>${tx.dealing_gbn || '-'}</td>
+            <td>${tx.rgs_date || '-'}</td>
+            <td>${tx.apt_dong || '-'}</td>
+            <td>${tx.cdeal_type || '-'}</td>
+            <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
+            <td>${formatNumber(tx.deal_amount)}만원</td>
+            <td><strong>${Math.round(tx.price_per_area / 10000).toLocaleString()}만원</strong></td>
+            <td>${tx.floor}층</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
 
-        // 셀렉트 옵션 생성
-        const areaFilter = document.getElementById('areaFilter');
-        uniqueAreas.forEach(area => {
-            const option = document.createElement('option');
-            option.value = area;
-            option.textContent = area + '㎡';
-            areaFilter.appendChild(option);
-        });
-    }
-});
+// 전월세 테이블 렌더링
+function renderRentTable() {
+    const tbody = document.getElementById('rentTableBody');
+    tbody.innerHTML = '';
+
+    rentTransactions.forEach(tx => {
+        const row = document.createElement('tr');
+        const transactionType = tx.transaction_type === '월세' ? '월세' : '전세';
+        const typeClass = tx.transaction_type === '월세' ? 'bg-warning text-dark' : 'bg-success';
+
+        row.innerHTML = `
+            <td>${tx.deal_date}</td>
+            <td>${tx.contract_term || '-'}</td>
+            <td>${tx.contract_type || '-'}</td>
+            <td>${tx.use_rr_right || '-'}</td>
+            <td>${tx.pre_deposit ? formatNumber(parseInt(tx.pre_deposit)) + '만원' : '-'}</td>
+            <td>${tx.pre_monthly_rent ? formatNumber(parseInt(tx.pre_monthly_rent)) + '만원' : '-'}</td>
+            <td><span class="badge ${typeClass}">${transactionType}</span></td>
+            <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
+            <td>${formatNumber(tx.deposit || tx.deal_amount)}만원</td>
+            <td>${tx.transaction_type === '월세' ? formatNumber(tx.monthly_rent || 0) + '만원' : '-'}</td>
+            <td>${tx.floor}층</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// 전용면적 필터 초기화
+function initializeAreaFilter() {
+    const allTransactions = [...saleTransactions, ...rentTransactions];
+    const uniqueAreas = [...new Set(allTransactions.map(tx => parseFloat(tx.exclusive_area)))].sort((a, b) => a - b);
+
+    const areaFilter = document.getElementById('areaFilter');
+    areaFilter.innerHTML = '<option value="">전체 면적</option>';
+
+    uniqueAreas.forEach(area => {
+        const option = document.createElement('option');
+        option.value = area;
+        option.textContent = area.toFixed(1) + '㎡';
+        areaFilter.appendChild(option);
+    });
+}
 
 // 전용면적별 필터링 함수
 function filterByArea() {
     const selectedArea = document.getElementById('areaFilter').value;
-    const tbody = document.querySelector('#transactionTable tbody');
 
     if (!selectedArea) {
         // 전체 표시
-        allTransactions.forEach(tx => {
-            tx.element.style.display = '';
-        });
+        renderSaleTable();
+        renderRentTable();
     } else {
         // 선택된 면적만 표시
         const targetArea = parseFloat(selectedArea);
-        allTransactions.forEach(tx => {
-            if (tx.area === targetArea) {
-                tx.element.style.display = '';
-            } else {
-                tx.element.style.display = 'none';
-            }
-        });
+
+        // 매매 데이터 필터링
+        const filteredSale = saleTransactions.filter(tx => parseFloat(tx.exclusive_area) === targetArea);
+        renderFilteredSaleTable(filteredSale);
+
+        // 전월세 데이터 필터링
+        const filteredRent = rentTransactions.filter(tx => parseFloat(tx.exclusive_area) === targetArea);
+        renderFilteredRentTable(filteredRent);
+    }
+}
+
+// 필터링된 매매 테이블 렌더링
+function renderFilteredSaleTable(transactions) {
+    const tbody = document.getElementById('saleTableBody');
+    tbody.innerHTML = '';
+
+    transactions.forEach(tx => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${tx.deal_date}</td>
+            <td>${tx.dealing_gbn || '-'}</td>
+            <td>${tx.rgs_date || '-'}</td>
+            <td>${tx.apt_dong || '-'}</td>
+            <td>${tx.cdeal_type || '-'}</td>
+            <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
+            <td>${formatNumber(tx.deal_amount)}만원</td>
+            <td><strong>${Math.round(tx.price_per_area / 10000).toLocaleString()}만원</strong></td>
+            <td>${tx.floor}층</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// 필터링된 전월세 테이블 렌더링
+function renderFilteredRentTable(transactions) {
+    const tbody = document.getElementById('rentTableBody');
+    tbody.innerHTML = '';
+
+    transactions.forEach(tx => {
+        const row = document.createElement('tr');
+        const transactionType = tx.transaction_type === '월세' ? '월세' : '전세';
+        const typeClass = tx.transaction_type === '월세' ? 'bg-warning text-dark' : 'bg-success';
+
+        row.innerHTML = `
+            <td>${tx.deal_date}</td>
+            <td>${tx.contract_term || '-'}</td>
+            <td>${tx.contract_type || '-'}</td>
+            <td>${tx.use_rr_right || '-'}</td>
+            <td>${tx.pre_deposit ? formatNumber(parseInt(tx.pre_deposit)) + '만원' : '-'}</td>
+            <td>${tx.pre_monthly_rent ? formatNumber(parseInt(tx.pre_monthly_rent)) + '만원' : '-'}</td>
+            <td><span class="badge ${typeClass}">${transactionType}</span></td>
+            <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
+            <td>${formatNumber(tx.deposit || tx.deal_amount)}만원</td>
+            <td>${tx.transaction_type === '월세' ? formatNumber(tx.monthly_rent || 0) + '만원' : '-'}</td>
+            <td>${tx.floor}층</td>
+        `;
+        tbody.appendChild(row);
+    });
+}
+
+// 숫자 포맷팅 함수
+function formatNumber(num) {
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// 가격 동향 요약 계산 및 표시
+function calculatePriceSummaries() {
+    const transactions = {{ transactions | tojson }};
+
+    // 매매와 전월세 거래 분리
+    const saleTransactions = transactions.filter(tx => (tx.transaction_type || '매매') === '매매');
+    const rentTransactions = transactions.filter(tx => (tx.transaction_type || '매매') !== '매매');
+
+    // 매매 가격 통계 계산
+    if (saleTransactions.length > 0) {
+        const salePrices = saleTransactions.map(tx => tx.deal_amount);
+        const saleAvg = salePrices.reduce((a, b) => a + b, 0) / salePrices.length;
+        const saleMin = Math.min(...salePrices);
+        const saleMax = Math.max(...salePrices);
+
+        // 가격 변동률 계산 (최근 3개월 vs 그 이전 3개월)
+        const sortedSale = saleTransactions.sort((a, b) => new Date(a.deal_date) - new Date(b.deal_date));
+        const recentSale = sortedSale.slice(-Math.ceil(sortedSale.length / 2));
+        const olderSale = sortedSale.slice(0, Math.floor(sortedSale.length / 2));
+
+        let saleChangeRate = 0;
+        if (olderSale.length > 0 && recentSale.length > 0) {
+            const recentAvg = recentSale.reduce((a, b) => a + b.deal_amount, 0) / recentSale.length;
+            const olderAvg = olderSale.reduce((a, b) => a + b.deal_amount, 0) / olderSale.length;
+            saleChangeRate = ((recentAvg - olderAvg) / olderAvg) * 100;
+        }
+
+        // 매매 통계 표시
+        document.getElementById('saleAvgPrice').textContent = Math.round(saleAvg).toLocaleString() + '만원';
+        document.getElementById('saleMinPrice').textContent = saleMin.toLocaleString() + '만원';
+        document.getElementById('saleMaxPrice').textContent = saleMax.toLocaleString() + '만원';
+
+        const changeElement = document.getElementById('saleChangeRate');
+        changeElement.textContent = saleChangeRate.toFixed(1) + '%';
+        changeElement.className = 'h3 mb-0 ' + getPriceChangeClass(saleChangeRate);
+        changeElement.innerHTML = getPriceChangeIcon(saleChangeRate) + ' ' + saleChangeRate.toFixed(1) + '%';
+    } else {
+        // 매매 데이터가 없는 경우
+        document.getElementById('saleAvgPrice').textContent = '데이터 없음';
+        document.getElementById('saleMinPrice').textContent = '데이터 없음';
+        document.getElementById('saleMaxPrice').textContent = '데이터 없음';
+        document.getElementById('saleChangeRate').textContent = '데이터 없음';
+    }
+
+    // 전월세 가격 통계 계산
+    if (rentTransactions.length > 0) {
+        const deposits = rentTransactions.map(tx => tx.deposit || tx.deal_amount);
+        const monthlyRents = rentTransactions.filter(tx => tx.transaction_type === '월세').map(tx => tx.monthly_rent || 0);
+
+        const depositAvg = deposits.reduce((a, b) => a + b, 0) / deposits.length;
+        const depositMin = Math.min(...deposits);
+        const depositMax = Math.max(...deposits);
+        const monthlyAvg = monthlyRents.length > 0 ? monthlyRents.reduce((a, b) => a + b, 0) / monthlyRents.length : 0;
+
+        // 전월세 통계 표시
+        document.getElementById('rentAvgDeposit').textContent = Math.round(depositAvg).toLocaleString() + '만원';
+        document.getElementById('rentAvgMonthly').textContent = monthlyAvg > 0 ? Math.round(monthlyAvg).toLocaleString() + '만원' : '해당없음';
+        document.getElementById('rentMinDeposit').textContent = depositMin.toLocaleString() + '만원';
+        document.getElementById('rentMaxDeposit').textContent = depositMax.toLocaleString() + '만원';
+    } else {
+        // 전월세 데이터가 없는 경우
+        document.getElementById('rentAvgDeposit').textContent = '데이터 없음';
+        document.getElementById('rentAvgMonthly').textContent = '데이터 없음';
+        document.getElementById('rentMinDeposit').textContent = '데이터 없음';
+        document.getElementById('rentMaxDeposit').textContent = '데이터 없음';
     }
 }
 </script>

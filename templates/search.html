@@ -19,6 +19,27 @@
                     <h5 class="mb-0">검색 조건</h5>
                 </div>
                 <div class="card-body">
+                    <!-- 검색 타입 선택 -->
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label">검색 타입</label>
+                            <div class="d-flex gap-4">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="searchType" id="saleType" value="sale" checked>
+                                    <label class="form-check-label" for="saleType">
+                                        <i class="fas fa-home me-1"></i>매매
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="searchType" id="rentType" value="rent">
+                                    <label class="form-check-label" for="rentType">
+                                        <i class="fas fa-key me-1"></i>전월세
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="row">
                         <div class="col-md-3">
                             <label for="citySelect" class="form-label">시/도</label>
@@ -230,8 +251,9 @@ function performSearch() {
     const city = document.getElementById('citySelect').value;
     const district = document.getElementById('districtSelect').value;
     const dong = document.getElementById('dongSelect').value;
+    const searchType = document.querySelector('input[name="searchType"]:checked').value;
 
-    console.log('검색 실행:', city, district, dong);
+    console.log('검색 실행:', city, district, dong, searchType);
 
     if (!city || !district || !dong) {
         showError('시/도, 군/구, 법정동을 모두 선택해주세요.');
@@ -250,7 +272,8 @@ function performSearch() {
         body: JSON.stringify({
             city: city,
             district: district,
-            dong: dong
+            dong: dong,
+            search_type: searchType
         })
     })
     .then(response => response.json())
@@ -280,9 +303,11 @@ function displaySearchResults(response) {
     const totalCount = response.total_count || 0;
     const apartmentCount = allApartments.length;
     const dongName = response.dong_name || '';
+    const searchType = response.search_type || 'sale';
+    const searchTypeName = searchType === 'sale' ? '매매' : '전월세';
 
     document.getElementById('resultSummary').textContent =
-        `${currentRegionName}: ${apartmentCount}개 아파트, ${totalCount.toLocaleString()}건 거래기록`;
+        `${currentRegionName} (${searchTypeName}): ${apartmentCount}개 아파트, ${totalCount.toLocaleString()}건 거래기록`;
 
     displayApartmentsByDong(allApartments);
     document.getElementById('searchResults').classList.remove('d-none');
@@ -329,6 +354,11 @@ function displayApartmentsByDong(apartments) {
             const avgPrice = formatPrice(Math.round(apt.avg_price));
             const priceRange = `${formatPrice(Math.round(apt.min_price))} ~ ${formatPrice(Math.round(apt.max_price))}`;
 
+            // 전월세 여부에 따른 라벨 변경
+            const isRent = apt.is_rent || false;
+            const priceLabel = isRent ? '평균 보증금' : '평균 거래가';
+            const rangeLabel = isRent ? '보증금 범위' : '거래가 범위';
+
             html += `
                 <div class="col-md-6 col-lg-4 mb-3">
                     <div class="card h-100 apartment-card" style="cursor: pointer;"
@@ -338,8 +368,8 @@ function displayApartmentsByDong(apartments) {
                             <h6 class="card-title text-primary">${apt.apt_name}</h6>
                             <p class="card-text small">
                                 <i class="fas fa-calendar me-1"></i>준공: ${apt.build_year}년<br>
-                                <i class="fas fa-chart-line me-1"></i>평균: ${avgPrice}<br>
-                                <i class="fas fa-arrows-alt-h me-1"></i>범위: ${priceRange}<br>
+                                <i class="fas fa-chart-line me-1"></i>${priceLabel}: ${avgPrice}<br>
+                                <i class="fas fa-arrows-alt-h me-1"></i>${rangeLabel}: ${priceRange}<br>
                                 <i class="fas fa-exchange-alt me-1"></i>거래: ${apt.transaction_count}건
                             </p>
                         </div>
@@ -421,6 +451,9 @@ function displayTransactionHistory(transactions) {
         return;
     }
 
+    // 거래 타입 확인 (전월세인지 매매인지)
+    const isRentTransaction = transactions.length > 0 && transactions[0].transaction_type !== undefined;
+
     let html = `
         <div class="mb-3">
             <h6>최근 거래기록 (${transactions.length}건)</h6>
@@ -429,7 +462,24 @@ function displayTransactionHistory(transactions) {
             <table class="table table-sm table-striped">
                 <thead>
                     <tr>
-                        <th>거래일</th>
+                        <th>거래일</th>`;
+
+    if (isRentTransaction) {
+        html += `
+                        <th>계약기간</th>
+                        <th>계약구분</th>
+                        <th>갱신요구권사용</th>
+                        <th>종전보증금</th>
+                        <th>종전월세</th>`;
+    } else {
+        html += `
+                        <th>거래유형</th>
+                        <th>등기일자</th>
+                        <th>아파트동명</th>
+                        <th>해제여부</th>`;
+    }
+
+    html += `
                         <th>면적(㎡)</th>
                         <th>층</th>
                         <th>거래가격</th>
@@ -440,14 +490,48 @@ function displayTransactionHistory(transactions) {
 
     transactions.forEach(tx => {
         const price = formatPrice(tx.deal_amount);
-        html += `
-            <tr>
-                <td>${tx.deal_date}</td>
-                <td>${tx.exclusive_area}</td>
-                <td>${tx.floor}층</td>
-                <td class="text-primary fw-bold">${price}</td>
-            </tr>
-        `;
+
+        if (isRentTransaction) {
+            // 전월세 거래용 컬럼
+            const contractTerm = tx.contract_term || '-';
+            const contractType = tx.contract_type || '-';
+            const useRRRight = tx.use_rr_right || '-';
+            const preDeposit = tx.pre_deposit ? formatPrice(parseInt(tx.pre_deposit)) : '-';
+            const preMonthlyRent = tx.pre_monthly_rent ? formatPrice(parseInt(tx.pre_monthly_rent)) : '-';
+
+            html += `
+                <tr>
+                    <td>${tx.deal_date}</td>
+                    <td>${contractTerm}</td>
+                    <td>${contractType}</td>
+                    <td>${useRRRight}</td>
+                    <td>${preDeposit}</td>
+                    <td>${preMonthlyRent}</td>
+                    <td>${tx.exclusive_area}</td>
+                    <td>${tx.floor}층</td>
+                    <td class="text-primary fw-bold">${price}</td>
+                </tr>
+            `;
+        } else {
+            // 매매 거래용 컬럼
+            const dealingGbn = tx.dealing_gbn || '-';
+            const rgsDate = tx.rgs_date || '-';
+            const aptDong = tx.apt_dong || '-';
+            const cdealType = tx.cdeal_type || '-';
+
+            html += `
+                <tr>
+                    <td>${tx.deal_date}</td>
+                    <td>${dealingGbn}</td>
+                    <td>${rgsDate}</td>
+                    <td>${aptDong}</td>
+                    <td>${cdealType}</td>
+                    <td>${tx.exclusive_area}</td>
+                    <td>${tx.floor}층</td>
+                    <td class="text-primary fw-bold">${price}</td>
+                </tr>
+            `;
+        }
     });
 
     html += '</tbody></table></div>';
