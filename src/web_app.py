@@ -163,6 +163,62 @@ class ApartmentTrackerApp:
             districts = self.molit_api.get_districts(city)
             return jsonify({'success': True, 'districts': districts})
 
+        @self.app.route('/api/dongs/<city>/<district>')
+        def api_dongs(city, district):
+            """특정 시/도, 군/구의 법정동 목록 API"""
+            try:
+                if not self.molit_api:
+                    return jsonify({'success': False, 'message': 'API 연결 실패'})
+
+                # 5자리 지역 코드 조회
+                region_code = self.molit_api.get_region_code_by_city_district(city, district)
+                if not region_code:
+                    return jsonify({'success': False, 'message': '해당 지역을 찾을 수 없습니다.'})
+
+                # 캐시에서 동 목록 조회 시도
+                cache_data = self.db.get_search_cache(region_code, 36, datetime.now().strftime('%Y-%m-%d'))
+
+                if cache_data and cache_data.get('raw_data'):
+                    # 캐시된 데이터에서 동 목록 추출
+                    dong_list = list(set([tx.get('umd_nm', '') for tx in cache_data['raw_data'] if tx.get('umd_nm')]))
+                    dong_list = [dong for dong in dong_list if dong]  # 빈 문자열 제거
+                    dong_list.sort()
+
+                    return jsonify({
+                        'success': True,
+                        'dongs': dong_list,
+                        'region_code': region_code,
+                        'region_name': f"{city} {district}",
+                        'from_cache': True
+                    })
+
+                # 캐시가 없으면 짧은 기간으로 API 호출해서 동 목록만 추출
+                try:
+                    # 최근 6개월 데이터로 동 목록 추출
+                    api_data = self.molit_api.get_multiple_months_data(region_code, months=6)
+                    if api_data:
+                        dong_list = list(set([tx.get('umd_nm', '') for tx in api_data if tx.get('umd_nm')]))
+                        dong_list = [dong for dong in dong_list if dong]  # 빈 문자열 제거
+                        dong_list.sort()
+
+                        return jsonify({
+                            'success': True,
+                            'dongs': dong_list,
+                            'region_code': region_code,
+                            'region_name': f"{city} {district}",
+                            'from_cache': False
+                        })
+                    else:
+                        return jsonify({'success': False, 'message': '해당 지역의 거래 데이터가 없습니다.'})
+
+                except Exception as e:
+                    self.logger.error(f"동 목록 API 호출 오류: {e}")
+                    return jsonify({'success': False, 'message': f'API 호출 중 오류가 발생했습니다: {str(e)}'})
+
+            except Exception as e:
+                self.logger.error(f"동 목록 조회 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
         @self.app.route('/api/regions')
         def api_regions():
             """지역 목록 API (기존 호환성)"""
@@ -383,9 +439,10 @@ class ApartmentTrackerApp:
                 data = request.get_json()
                 city = data.get('city')
                 district = data.get('district')
-                
-                if not city or not district:
-                    return jsonify({'success': False, 'message': '시도와 군구를 선택해주세요.'})
+                dong = data.get('dong')
+
+                if not city or not district or not dong:
+                    return jsonify({'success': False, 'message': '시도, 군구, 법정동을 모두 선택해주세요.'})
                 
                 # 지역 코드 조회
                 region_code = self.molit_api.get_region_code_by_city_district(city, district)
@@ -396,21 +453,29 @@ class ApartmentTrackerApp:
                 search_date = datetime.now().strftime('%Y-%m-%d')
                 cached_data = self.db.get_search_cache(region_code, 36, search_date)
                 if cached_data and cached_data.get('raw_data'):
-                    # 캐시된 데이터가 있으면 법정동 목록과 아파트 목록 추출
+                    # 캐시된 데이터에서 선택된 법정동으로 필터링
                     raw_data = cached_data['raw_data']
-                    dong_list = list(set([tx.get('umd_nm', '기타') for tx in raw_data if tx.get('umd_nm')]))
-                    dong_list.sort()
-                    
-                    # 아파트 목록 추출 (전체) - 개선된 버전
-                    apartment_list = self._extract_apartment_list_improved(raw_data)
-                    
+
+                    # 선택된 동으로 데이터 필터링
+                    filtered_data = [tx for tx in raw_data if tx.get('umd_nm') == dong]
+
+                    if not filtered_data:
+                        return jsonify({
+                            'success': False,
+                            'message': f'선택하신 법정동({dong})에서 거래 데이터를 찾을 수 없습니다.',
+                            'suggestion': '다른 법정동을 선택해주세요.'
+                        })
+
+                    # 아파트 목록 추출 (선택된 동만) - 개선된 버전
+                    apartment_list = self._extract_apartment_list_improved(filtered_data)
+
                     return jsonify({
-                        'success': True, 
+                        'success': True,
                         'region_code': region_code,
-                        'dong_list': dong_list,
+                        'dong_name': dong,
                         'apartment_list': apartment_list,
                         'from_cache': True,
-                        'total_count': len(raw_data)
+                        'total_count': len(filtered_data)
                     })
                 
                 # 캐시된 데이터가 없으면 API 호출
@@ -467,20 +532,26 @@ class ApartmentTrackerApp:
                         self.logger.error(f"거래 데이터 처리 중 오류: {e} - 타입: {type(transaction)}")
                         continue
                 
-                # 법정동 목록과 아파트 목록 추출
-                dong_list = list(set([tx.get('umd_nm', '기타') for tx in api_data if tx.get('umd_nm')]))
-                dong_list.sort()
-                
-                # 아파트 목록 추출 (전체) - 개선된 버전
-                apartment_list = self._extract_apartment_list_improved(api_data)
-                
+                # 선택된 동으로 API 데이터 필터링
+                filtered_data = [tx for tx in api_data if tx.get('umd_nm') == dong]
+
+                if not filtered_data:
+                    return jsonify({
+                        'success': False,
+                        'message': f'선택하신 법정동({dong})에서 거래 데이터를 찾을 수 없습니다.',
+                        'suggestion': '다른 법정동을 선택해주세요.'
+                    })
+
+                # 아파트 목록 추출 (선택된 동만) - 개선된 버전
+                apartment_list = self._extract_apartment_list_improved(filtered_data)
+
                 return jsonify({
                     'success': True,
                     'region_code': region_code,
-                    'dong_list': dong_list,
+                    'dong_name': dong,
                     'apartment_list': apartment_list,
                     'from_cache': False,
-                    'total_count': len(api_data)
+                    'total_count': len(filtered_data)
                 })
                 
             except Exception as e:
@@ -715,8 +786,8 @@ class ApartmentTrackerApp:
             # 거래 건수 증가
             apartment_dict[apt_name]['transaction_count'] += 1
             
-            # 가격 통계 계산
-            price = transaction.get('price_per_area', 0)
+            # 가격 통계 계산 (deal_amount 기준, 만원 단위)
+            price = transaction.get('deal_amount', 0)
             if price > 0:
                 apartment_dict[apt_name]['min_price'] = min(
                     apartment_dict[apt_name]['min_price'], price
@@ -780,8 +851,8 @@ class ApartmentTrackerApp:
             # 거래 건수 증가
             apartment_dict[apt_name]['transaction_count'] += 1
             
-            # 가격 통계 계산
-            price = transaction.get('price_per_area', 0)
+            # 가격 통계 계산 (deal_amount 기준, 만원 단위)
+            price = transaction.get('deal_amount', 0)
             if price > 0:
                 apartment_dict[apt_name]['min_price'] = min(
                     apartment_dict[apt_name]['min_price'], price
@@ -799,9 +870,9 @@ class ApartmentTrackerApp:
         apartment_list = []
         for apt_name, apt_data in apartment_dict.items():
             if apt_data['transaction_count'] > 0:
-                # 평균 가격 계산 - 해당 아파트의 모든 거래에서 계산
+                # 평균 가격 계산 - 해당 아파트의 모든 거래에서 계산 (deal_amount 기준)
                 apt_transactions = [tx for tx in transactions if tx.get('apt_name') == apt_name]
-                prices = [tx.get('price_per_area', 0) for tx in apt_transactions if tx.get('price_per_area', 0) > 0]
+                prices = [tx.get('deal_amount', 0) for tx in apt_transactions if tx.get('deal_amount', 0) > 0]
                 
                 if prices:
                     apt_data['avg_price'] = sum(prices) / len(prices)

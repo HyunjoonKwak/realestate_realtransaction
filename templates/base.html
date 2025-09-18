@@ -144,9 +144,19 @@
             return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
 
-        // 가격 포맷팅 (만원 단위)
-        function formatPrice(price) {
-            return Math.round(price / 10000).toLocaleString() + '만원';
+        // 가격 포맷팅 (만원 단위 입력)
+        function formatPrice(amount) {
+            if (amount >= 10000) {
+                const eok = Math.floor(amount / 10000);
+                const man = amount % 10000;
+                if (man === 0) {
+                    return `${eok.toLocaleString()}억원`;
+                } else {
+                    return `${eok.toLocaleString()}억 ${man.toLocaleString()}만원`;
+                }
+            } else {
+                return `${amount.toLocaleString()}만원`;
+            }
         }
 
         // 로딩 스피너 표시/숨김

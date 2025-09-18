@@ -321,13 +321,13 @@ class ApartmentDatabase:
         if not transactions:
             return {'trend': [], 'summary': {}}
         
-        # 월별 평균 가격 계산
+        # 월별 평균 가격 계산 (deal_amount 기준, 만원 단위)
         monthly_data = {}
         for tx in transactions:
             month_key = f"{tx['deal_year']}-{tx['deal_month']:02d}"
             if month_key not in monthly_data:
                 monthly_data[month_key] = []
-            monthly_data[month_key].append(tx['price_per_area'])
+            monthly_data[month_key].append(tx['deal_amount'])
         
         # 월별 통계 계산
         trend_data = []
@@ -340,8 +340,8 @@ class ApartmentDatabase:
                 'transaction_count': len(prices)
             })
         
-        # 요약 통계
-        all_prices = [tx['price_per_area'] for tx in transactions]
+        # 요약 통계 (deal_amount 기준, 만원 단위)
+        all_prices = [tx['deal_amount'] for tx in transactions]
         summary = {
             'total_transactions': len(transactions),
             'avg_price': sum(all_prices) / len(all_prices),

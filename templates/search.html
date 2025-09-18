@@ -32,15 +32,15 @@
 
                         <div class="col-md-3">
                             <label for="districtSelect" class="form-label">군/구</label>
-                            <select class="form-select" id="districtSelect" disabled onchange="enableSearchButton()">
+                            <select class="form-select" id="districtSelect" disabled onchange="loadDongs()">
                                 <option value="">군/구 선택</option>
                             </select>
                         </div>
 
                         <div class="col-md-3">
-                            <label for="dongFilter" class="form-label">법정동 (선택)</label>
-                            <select class="form-select" id="dongFilter" disabled>
-                                <option value="">전체 법정동</option>
+                            <label for="dongSelect" class="form-label">법정동</label>
+                            <select class="form-select" id="dongSelect" disabled onchange="enableSearchButton()">
+                                <option value="">법정동 선택</option>
                             </select>
                         </div>
 
@@ -119,7 +119,7 @@ let currentSelectedApartment = null;
 function loadDistricts() {
     const city = document.getElementById('citySelect').value;
     const districtSelect = document.getElementById('districtSelect');
-    const dongFilter = document.getElementById('dongFilter');
+    const dongSelect = document.getElementById('dongSelect');
     const searchBtn = document.getElementById('searchBtn');
 
     console.log('시/도 선택:', city);
@@ -127,8 +127,8 @@ function loadDistricts() {
     // 하위 필드 초기화
     districtSelect.innerHTML = '<option value="">군/구 선택</option>';
     districtSelect.disabled = true;
-    dongFilter.innerHTML = '<option value="">전체 법정동</option>';
-    dongFilter.disabled = true;
+    dongSelect.innerHTML = '<option value="">법정동 선택</option>';
+    dongSelect.disabled = true;
     searchBtn.disabled = true;
     hideResults();
 
@@ -161,15 +161,60 @@ function loadDistricts() {
         });
 }
 
-// 검색 버튼 활성화
-function enableSearchButton() {
+// 법정동 목록 로드
+function loadDongs() {
     const city = document.getElementById('citySelect').value;
     const district = document.getElementById('districtSelect').value;
+    const dongSelect = document.getElementById('dongSelect');
     const searchBtn = document.getElementById('searchBtn');
 
     console.log('군/구 선택:', district);
 
-    if (city && district) {
+    // 법정동 필드 초기화
+    dongSelect.innerHTML = '<option value="">법정동 선택</option>';
+    dongSelect.disabled = true;
+    searchBtn.disabled = true;
+    hideResults();
+
+    if (!city || !district) return;
+
+    console.log('법정동 목록 로드 시작:', city, district);
+
+    fetch(`/api/dongs/${encodeURIComponent(city)}/${encodeURIComponent(district)}`)
+        .then(response => response.json())
+        .then(data => {
+            console.log('법정동 API 응답:', data);
+
+            if (data.success && data.dongs) {
+                data.dongs.forEach(dong => {
+                    const option = document.createElement('option');
+                    option.value = dong;
+                    option.textContent = dong;
+                    dongSelect.appendChild(option);
+                });
+
+                dongSelect.disabled = false;
+                console.log('법정동 목록 로드 완료:', data.dongs.length + '개');
+            } else {
+                showError('법정동 목록을 불러오는데 실패했습니다.');
+            }
+        })
+        .catch(error => {
+            console.error('법정동 로드 오류:', error);
+            showError('법정동 목록을 불러오는 중 오류가 발생했습니다.');
+        });
+}
+
+// 검색 버튼 활성화
+function enableSearchButton() {
+    const city = document.getElementById('citySelect').value;
+    const district = document.getElementById('districtSelect').value;
+    const dong = document.getElementById('dongSelect').value;
+    const searchBtn = document.getElementById('searchBtn');
+
+    console.log('법정동 선택:', dong);
+
+    if (city && district && dong) {
         searchBtn.disabled = false;
         console.log('검색 버튼 활성화됨');
     } else {
@@ -184,11 +229,12 @@ function enableSearchButton() {
 function performSearch() {
     const city = document.getElementById('citySelect').value;
     const district = document.getElementById('districtSelect').value;
+    const dong = document.getElementById('dongSelect').value;
 
-    console.log('검색 실행:', city, district);
+    console.log('검색 실행:', city, district, dong);
 
-    if (!city || !district) {
-        showError('시/도와 군/구를 모두 선택해주세요.');
+    if (!city || !district || !dong) {
+        showError('시/도, 군/구, 법정동을 모두 선택해주세요.');
         return;
     }
 
@@ -203,7 +249,8 @@ function performSearch() {
         },
         body: JSON.stringify({
             city: city,
-            district: district
+            district: district,
+            dong: dong
         })
     })
     .then(response => response.json())
@@ -213,10 +260,9 @@ function performSearch() {
 
         if (data.success) {
             currentRegionCode = data.region_code;
-            currentRegionName = `${city} ${district}`;
+            currentRegionName = `${city} ${district} ${dong}`;
             allApartments = data.apartment_list || [];
 
-            setupDongFilter(data.dong_list || []);
             displaySearchResults(data);
         } else {
             showError(data.message || '검색 중 오류가 발생했습니다.');
@@ -229,49 +275,24 @@ function performSearch() {
     });
 }
 
-// 법정동 필터 설정
-function setupDongFilter(dongList) {
-    const dongFilter = document.getElementById('dongFilter');
-    dongFilter.innerHTML = '<option value="">전체 법정동</option>';
-
-    dongList.forEach(dong => {
-        const option = document.createElement('option');
-        option.value = dong;
-        option.textContent = dong;
-        dongFilter.appendChild(option);
-    });
-
-    dongFilter.disabled = false;
-    dongFilter.onchange = function() {
-        const selectedDong = this.value;
-        console.log('법정동 필터:', selectedDong);
-        displayApartmentsByDong(allApartments, selectedDong);
-    };
-}
-
 // 검색 결과 표시
 function displaySearchResults(response) {
     const totalCount = response.total_count || 0;
     const apartmentCount = allApartments.length;
-    const dongCount = (response.dong_list || []).length;
+    const dongName = response.dong_name || '';
 
     document.getElementById('resultSummary').textContent =
-        `${currentRegionName}: ${apartmentCount}개 아파트, ${dongCount}개 법정동, ${totalCount.toLocaleString()}건 거래기록`;
+        `${currentRegionName}: ${apartmentCount}개 아파트, ${totalCount.toLocaleString()}건 거래기록`;
 
     displayApartmentsByDong(allApartments);
     document.getElementById('searchResults').classList.remove('d-none');
 }
 
 // 동별 아파트 목록 표시
-function displayApartmentsByDong(apartments, selectedDong = '') {
-    console.log('동별 아파트 표시:', apartments.length + '개');
+function displayApartmentsByDong(apartments) {
+    console.log('아파트 표시:', apartments.length + '개');
 
     let filteredApartments = apartments;
-    if (selectedDong) {
-        filteredApartments = apartments.filter(apt =>
-            apt.dong_list && apt.dong_list.includes(selectedDong)
-        );
-    }
 
     // 동별로 그룹화
     const apartmentsByDong = {};
@@ -305,8 +326,8 @@ function displayApartmentsByDong(apartments, selectedDong = '') {
         `;
 
         dongApartments.forEach(apt => {
-            const avgPrice = formatPrice(Math.round(apt.avg_price / 10000));
-            const priceRange = `${formatPrice(Math.round(apt.min_price / 10000))} ~ ${formatPrice(Math.round(apt.max_price / 10000))}`;
+            const avgPrice = formatPrice(Math.round(apt.avg_price));
+            const priceRange = `${formatPrice(Math.round(apt.min_price))} ~ ${formatPrice(Math.round(apt.max_price))}`;
 
             html += `
                 <div class="col-md-6 col-lg-4 mb-3">
@@ -476,8 +497,8 @@ function resetForm() {
     document.getElementById('citySelect').value = '';
     document.getElementById('districtSelect').innerHTML = '<option value="">군/구 선택</option>';
     document.getElementById('districtSelect').disabled = true;
-    document.getElementById('dongFilter').innerHTML = '<option value="">전체 법정동</option>';
-    document.getElementById('dongFilter').disabled = true;
+    document.getElementById('dongSelect').innerHTML = '<option value="">법정동 선택</option>';
+    document.getElementById('dongSelect').disabled = true;
     document.getElementById('searchBtn').disabled = true;
 
     hideError();

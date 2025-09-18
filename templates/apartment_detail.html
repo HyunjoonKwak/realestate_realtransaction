@@ -34,17 +34,20 @@
             </div>
             <div class="card-body">
                 <div class="row">
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <strong>아파트명:</strong> {{ apt_name }}
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <strong>지역:</strong> {{ region_code }}
+                    </div>
+                    <div class="col-md-2">
+                        <strong>건축년도:</strong> {% if transactions %}{{ transactions[0].build_year }}년{% else %}정보없음{% endif %}
                     </div>
                     <div class="col-md-3">
                         <strong>총 거래건수:</strong> {{ transactions|length }}건
                     </div>
                     <div class="col-md-3">
-                        <strong>관심단지:</strong> 
+                        <strong>관심단지:</strong>
                         <span class="badge {{ 'bg-success' if is_favorite else 'bg-secondary' }}">
                             {{ '등록됨' if is_favorite else '미등록' }}
                         </span>
@@ -69,20 +72,20 @@
                 <div class="row">
                     <div class="col-md-3">
                         <div class="text-center">
-                            <div class="h3 text-primary mb-0">{{ "%.0f"|format(price_trend.summary.avg_price / 10000) }}만원</div>
-                            <small class="text-muted">평균 평당가격</small>
+                            <div class="h3 text-primary mb-0" id="avgPrice">{{ "%.0f"|format(price_trend.summary.avg_price) }}만원</div>
+                            <small class="text-muted">평균 거래가격</small>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="text-center">
-                            <div class="h3 text-success mb-0">{{ "%.0f"|format(price_trend.summary.min_price / 10000) }}만원</div>
-                            <small class="text-muted">최저 평당가격</small>
+                            <div class="h3 text-success mb-0" id="minPrice">{{ "%.0f"|format(price_trend.summary.min_price) }}만원</div>
+                            <small class="text-muted">최저 거래가격</small>
                         </div>
                     </div>
                     <div class="col-md-3">
                         <div class="text-center">
-                            <div class="h3 text-danger mb-0">{{ "%.0f"|format(price_trend.summary.max_price / 10000) }}만원</div>
-                            <small class="text-muted">최고 평당가격</small>
+                            <div class="h3 text-danger mb-0" id="maxPrice">{{ "%.0f"|format(price_trend.summary.max_price) }}만원</div>
+                            <small class="text-muted">최고 거래가격</small>
                         </div>
                     </div>
                     <div class="col-md-3">
@@ -127,7 +130,10 @@
                 <h5 class="card-title mb-0">
                     <i class="fas fa-list me-2"></i>거래 내역
                 </h5>
-                <div>
+                <div class="d-flex align-items-center gap-2">
+                    <select class="form-select form-select-sm" id="areaFilter" onchange="filterByArea()" style="width: auto;">
+                        <option value="">전체 면적</option>
+                    </select>
                     <button class="btn btn-outline-primary btn-sm" onclick="exportToCSV()">
                         <i class="fas fa-download me-1"></i>CSV 내보내기
                     </button>
@@ -144,8 +150,6 @@
                                 <th>거래금액</th>
                                 <th>평당가격</th>
                                 <th>층</th>
-                                <th>건축년도</th>
-                                <th>도로명주소</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -156,8 +160,6 @@
                                 <td>{{ "{:,}".format(tx.deal_amount) }}만원</td>
                                 <td><strong>{{ "%.0f"|format(tx.price_per_area / 10000) }}만원</strong></td>
                                 <td>{{ tx.floor }}층</td>
-                                <td>{{ tx.build_year }}년</td>
-                                <td>{{ tx.road_name }} {{ tx.road_name_bonbun }}{{ tx.road_name_bubun }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -198,7 +200,7 @@ function createPriceChart() {
 
     const trendData = {{ price_trend.trend | tojson }};
     const months = trendData.map(item => item.month);
-    const avgPrices = trendData.map(item => Math.round(item.avg_price / 10000));
+    const avgPrices = trendData.map(item => Math.round(item.avg_price));
     const transactionCounts = trendData.map(item => item.transaction_count);
 
     priceChart = new Chart(ctx, {
@@ -289,7 +291,7 @@ function exportToCSV() {
     }
 
     // CSV 헤더
-    const headers = ['거래일', '전용면적', '거래금액', '평당가격', '층', '건축년도', '도로명주소'];
+    const headers = ['거래일', '전용면적', '거래금액', '평당가격', '층'];
     
     // CSV 데이터
     const csvData = transactions.map(tx => [
@@ -297,9 +299,7 @@ function exportToCSV() {
         tx.exclusive_area,
         tx.deal_amount,
         Math.round(tx.price_per_area / 10000),
-        tx.floor,
-        tx.build_year,
-        `${tx.road_name} ${tx.road_name_bonbun}${tx.road_name_bubun}`
+        tx.floor
     ]);
 
     // CSV 문자열 생성
@@ -319,6 +319,82 @@ function exportToCSV() {
     document.body.removeChild(link);
 
     showToast('CSV 파일이 다운로드되었습니다.', 'success');
+}
+
+// 전용면적 필터링 기능
+let allTransactions = [];
+
+// 페이지 로드 시 전용면적 옵션 초기화 및 가격 포맷팅
+document.addEventListener('DOMContentLoaded', function() {
+    // 가격 동향 요약 포맷팅
+    const avgPriceEl = document.getElementById('avgPrice');
+    const minPriceEl = document.getElementById('minPrice');
+    const maxPriceEl = document.getElementById('maxPrice');
+
+    if (avgPriceEl) {
+        const avgPrice = parseInt(avgPriceEl.textContent.replace('만원', ''));
+        avgPriceEl.textContent = formatPrice(avgPrice);
+    }
+
+    if (minPriceEl) {
+        const minPrice = parseInt(minPriceEl.textContent.replace('만원', ''));
+        minPriceEl.textContent = formatPrice(minPrice);
+    }
+
+    if (maxPriceEl) {
+        const maxPrice = parseInt(maxPriceEl.textContent.replace('만원', ''));
+        maxPriceEl.textContent = formatPrice(maxPrice);
+    }
+
+    const table = document.getElementById('transactionTable');
+    if (table) {
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        // 모든 거래 데이터 저장
+        allTransactions = rows.map(row => {
+            const cells = row.querySelectorAll('td');
+            return {
+                element: row,
+                area: parseFloat(cells[1].textContent.replace('㎡', ''))
+            };
+        });
+
+        // 유니크한 전용면적 목록 생성
+        const uniqueAreas = [...new Set(allTransactions.map(tx => tx.area))].sort((a, b) => a - b);
+
+        // 셀렉트 옵션 생성
+        const areaFilter = document.getElementById('areaFilter');
+        uniqueAreas.forEach(area => {
+            const option = document.createElement('option');
+            option.value = area;
+            option.textContent = area + '㎡';
+            areaFilter.appendChild(option);
+        });
+    }
+});
+
+// 전용면적별 필터링 함수
+function filterByArea() {
+    const selectedArea = document.getElementById('areaFilter').value;
+    const tbody = document.querySelector('#transactionTable tbody');
+
+    if (!selectedArea) {
+        // 전체 표시
+        allTransactions.forEach(tx => {
+            tx.element.style.display = '';
+        });
+    } else {
+        // 선택된 면적만 표시
+        const targetArea = parseFloat(selectedArea);
+        allTransactions.forEach(tx => {
+            if (tx.area === targetArea) {
+                tx.element.style.display = '';
+            } else {
+                tx.element.style.display = 'none';
+            }
+        });
+    }
 }
 </script>
 {% endblock %}

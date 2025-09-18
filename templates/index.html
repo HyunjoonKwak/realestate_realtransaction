@@ -71,8 +71,8 @@
                         {% set summary = favorite.price_trend.summary %}
                         <div class="row mb-3">
                             <div class="col-6">
-                                <small class="text-muted">평균 평당가격</small>
-                                <div class="fw-bold text-primary">{{ "%.0f"|format(summary.avg_price / 10000) }}만원</div>
+                                <small class="text-muted">평균 거래가격</small>
+                                <div class="fw-bold text-primary">{{ "%.0f"|format(summary.avg_price) }}만원</div>
                             </div>
                             <div class="col-6">
                                 <small class="text-muted">가격 변동</small>
@@ -111,7 +111,7 @@
                                         <tr>
                                             <td>{{ tx.deal_date }}</td>
                                             <td>{{ "%.1f"|format(tx.exclusive_area) }}㎡</td>
-                                            <td>{{ "%.0f"|format(tx.price_per_area / 10000) }}만원</td>
+                                            <td>{{ "%.0f"|format(tx.deal_amount) }}만원</td>
                                         </tr>
                                         {% endfor %}
                                     </tbody>
