@@ -211,10 +211,6 @@
                                 <thead class="table-light">
                                     <tr>
                                         <th>거래일</th>
-                                        <th>거래유형</th>
-                                        <th>등기일자</th>
-                                        <th>아파트동명</th>
-                                        <th>해제여부</th>
                                         <th>전용면적</th>
                                         <th>거래금액</th>
                                         <th>평당가격</th>
@@ -235,11 +231,6 @@
                                 <thead class="table-light">
                                     <tr>
                                         <th>거래일</th>
-                                        <th>계약기간</th>
-                                        <th>계약구분</th>
-                                        <th>갱신요구권사용</th>
-                                        <th>종전보증금</th>
-                                        <th>종전월세</th>
                                         <th>유형</th>
                                         <th>전용면적</th>
                                         <th>보증금</th>
@@ -452,10 +443,6 @@ function renderSaleTable() {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${tx.deal_date}</td>
-            <td>${tx.dealing_gbn || '-'}</td>
-            <td>${tx.rgs_date || '-'}</td>
-            <td>${tx.apt_dong || '-'}</td>
-            <td>${tx.cdeal_type || '-'}</td>
             <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
             <td>${formatNumber(tx.deal_amount)}만원</td>
             <td><strong>${Math.round(tx.price_per_area / 10000).toLocaleString()}만원</strong></td>
@@ -477,11 +464,6 @@ function renderRentTable() {
 
         row.innerHTML = `
             <td>${tx.deal_date}</td>
-            <td>${tx.contract_term || '-'}</td>
-            <td>${tx.contract_type || '-'}</td>
-            <td>${tx.use_rr_right || '-'}</td>
-            <td>${tx.pre_deposit ? formatNumber(parseInt(tx.pre_deposit)) + '만원' : '-'}</td>
-            <td>${tx.pre_monthly_rent ? formatNumber(parseInt(tx.pre_monthly_rent)) + '만원' : '-'}</td>
             <td><span class="badge ${typeClass}">${transactionType}</span></td>
             <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
             <td>${formatNumber(tx.deposit || tx.deal_amount)}만원</td>
@@ -539,10 +521,6 @@ function renderFilteredSaleTable(transactions) {
         const row = document.createElement('tr');
         row.innerHTML = `
             <td>${tx.deal_date}</td>
-            <td>${tx.dealing_gbn || '-'}</td>
-            <td>${tx.rgs_date || '-'}</td>
-            <td>${tx.apt_dong || '-'}</td>
-            <td>${tx.cdeal_type || '-'}</td>
             <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
             <td>${formatNumber(tx.deal_amount)}만원</td>
             <td><strong>${Math.round(tx.price_per_area / 10000).toLocaleString()}만원</strong></td>
@@ -564,11 +542,6 @@ function renderFilteredRentTable(transactions) {
 
         row.innerHTML = `
             <td>${tx.deal_date}</td>
-            <td>${tx.contract_term || '-'}</td>
-            <td>${tx.contract_type || '-'}</td>
-            <td>${tx.use_rr_right || '-'}</td>
-            <td>${tx.pre_deposit ? formatNumber(parseInt(tx.pre_deposit)) + '만원' : '-'}</td>
-            <td>${tx.pre_monthly_rent ? formatNumber(parseInt(tx.pre_monthly_rent)) + '만원' : '-'}</td>
             <td><span class="badge ${typeClass}">${transactionType}</span></td>
             <td>${parseFloat(tx.exclusive_area).toFixed(1)}㎡</td>
             <td>${formatNumber(tx.deposit || tx.deal_amount)}만원</td>

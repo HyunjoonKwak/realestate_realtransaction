@@ -466,17 +466,9 @@ function displayTransactionHistory(transactions) {
 
     if (isRentTransaction) {
         html += `
-                        <th>계약기간</th>
-                        <th>계약구분</th>
-                        <th>갱신요구권사용</th>
-                        <th>종전보증금</th>
-                        <th>종전월세</th>`;
+                        <th>거래유형</th>`;
     } else {
-        html += `
-                        <th>거래유형</th>
-                        <th>등기일자</th>
-                        <th>아파트동명</th>
-                        <th>해제여부</th>`;
+        // 매매 거래는 기본 컬럼만 표시
     }
 
     html += `
@@ -492,40 +484,23 @@ function displayTransactionHistory(transactions) {
         const price = formatPrice(tx.deal_amount);
 
         if (isRentTransaction) {
-            // 전월세 거래용 컬럼
-            const contractTerm = tx.contract_term || '-';
-            const contractType = tx.contract_type || '-';
-            const useRRRight = tx.use_rr_right || '-';
-            const preDeposit = tx.pre_deposit ? formatPrice(parseInt(tx.pre_deposit)) : '-';
-            const preMonthlyRent = tx.pre_monthly_rent ? formatPrice(parseInt(tx.pre_monthly_rent)) : '-';
+            // 전월세 거래용 컬럼 (기본 정보만)
+            const transactionType = tx.transaction_type || '-';
 
             html += `
                 <tr>
                     <td>${tx.deal_date}</td>
-                    <td>${contractTerm}</td>
-                    <td>${contractType}</td>
-                    <td>${useRRRight}</td>
-                    <td>${preDeposit}</td>
-                    <td>${preMonthlyRent}</td>
+                    <td>${transactionType}</td>
                     <td>${tx.exclusive_area}</td>
                     <td>${tx.floor}층</td>
                     <td class="text-primary fw-bold">${price}</td>
                 </tr>
             `;
         } else {
-            // 매매 거래용 컬럼
-            const dealingGbn = tx.dealing_gbn || '-';
-            const rgsDate = tx.rgs_date || '-';
-            const aptDong = tx.apt_dong || '-';
-            const cdealType = tx.cdeal_type || '-';
-
+            // 매매 거래용 컬럼 (기본 정보만)
             html += `
                 <tr>
                     <td>${tx.deal_date}</td>
-                    <td>${dealingGbn}</td>
-                    <td>${rgsDate}</td>
-                    <td>${aptDong}</td>
-                    <td>${cdealType}</td>
                     <td>${tx.exclusive_area}</td>
                     <td>${tx.floor}층</td>
                     <td class="text-primary fw-bold">${price}</td>

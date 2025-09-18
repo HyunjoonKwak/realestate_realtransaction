@@ -613,7 +613,6 @@ class MolitRealEstateAPI:
                     'exclusive_area': exclusive_area,
                     'floor': floor,
                     'jibun': self._get_xml_text(item, 'jibun'),
-                    'rgs_date': self._get_xml_text(item, 'rgsDate'),
                     'road_name': self._get_xml_text(item, 'roadNm'),
                     'road_name_bonbun': self._get_xml_text(item, 'roadNmBonbun'),
                     'road_name_bubun': self._get_xml_text(item, 'roadNmBubun'),
@@ -624,7 +623,13 @@ class MolitRealEstateAPI:
                     'region_code': lawd_cd,
                     'region_name': self.get_region_name(lawd_cd),
                     'deal_date': deal_date,
-                    'price_per_area': 0  # 계산해서 추가
+                    'price_per_area': 0,  # 계산해서 추가
+                    # 추가 필드들 - 빈 값이어도 파싱
+                    'rgs_date': self._get_xml_text(item, 'rgsDate'),  # 등기일자
+                    'cancel_deal_type': self._get_xml_text(item, 'cancelDealType'),  # 해제여부
+                    'cancel_deal_day': self._get_xml_text(item, 'cancelDealDay'),  # 해제사유발생일
+                    'req_gbn': self._get_xml_text(item, 'reqGbn'),  # 거래유형
+                    'house_type': self._get_xml_text(item, 'houseType'),  # 주택유형
                 }
                 
                 # 평당 가격 계산
@@ -1293,7 +1298,7 @@ class MolitRealEstateAPI:
                         'road_name': self._get_xml_text(item, 'roadNm', ''),
                         'road_name_bonbun': self._get_xml_text(item, 'roadNmBonbun', ''),
                         'road_name_bubun': self._get_xml_text(item, 'roadNmBubun', ''),
-                        'umd_nm': self._get_xml_text(item, 'umdNm', ''),  # 법정동명 추가
+                        'umd_nm': self._get_xml_text(item, 'umdNm', ''),  # 법정동명
                         'use_rr_right': self._get_xml_text(item, 'useRRRight', ''),
 
                         # 전월세 특화 필드
@@ -1303,7 +1308,14 @@ class MolitRealEstateAPI:
 
                         # 호환성을 위한 필드
                         'deal_amount': self._safe_int(deposit),  # 보증금을 거래금액으로 사용
-                        'price_per_area': 0  # 전월세는 평당가격 계산하지 않음
+                        'price_per_area': 0,  # 전월세는 평당가격 계산하지 않음
+
+                        # 추가 필드들 - 전월세용
+                        'apt_dong': self._get_xml_text(item, 'aptDong', ''),  # 아파트동명
+                        'jibun': self._get_xml_text(item, 'jibun', ''),  # 지번
+                        'rgs_date': self._get_xml_text(item, 'rgsDate', ''),  # 등기일자
+                        'sgg_cd': self._get_xml_text(item, 'sggCd', ''),  # 시군구코드
+                        'umd_cd': self._get_xml_text(item, 'umdCd', ''),  # 읍면동코드
                     }
 
                     transactions.append(transaction)
