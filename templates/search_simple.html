@@ -145,7 +145,7 @@ function loadDistricts() {
                 data.districts.forEach(district => {
                     const option = document.createElement('option');
                     option.value = district.name;
-                    option.textContent = `${district.name} (${district.code})`;
+                    option.textContent = district.name;
                     districtSelect.appendChild(option);
                 });
 
@@ -311,8 +311,7 @@ function displayApartmentsByDong(apartments, selectedDong = '') {
             html += `
                 <div class="col-md-6 col-lg-4 mb-3">
                     <div class="card h-100 apartment-card" style="cursor: pointer;"
-                         data-apt-name="${apt.apt_name}" data-region-code="${apt.region_code}"
-                         onclick="showApartmentDetailFromData(this)">
+                         onclick="showApartmentDetail('${apt.apt_name}', '${apt.region_code}')">
                         <div class="card-body">
                             <h6 class="card-title text-primary">${apt.apt_name}</h6>
                             <p class="card-text small">
@@ -343,7 +342,7 @@ function displayApartmentsByDong(apartments, selectedDong = '') {
 
 // 아파트 상세 정보 표시
 function showApartmentDetail(aptName, regionCode) {
-    console.log('🏢 아파트 상세 요청:', aptName, '지역코드:', regionCode);
+    console.log('아파트 상세:', aptName);
 
     currentSelectedApartment = { name: aptName, regionCode: regionCode };
     document.getElementById('modalTitle').textContent = aptName + ' - 거래기록';
@@ -353,27 +352,21 @@ function showApartmentDetail(aptName, regionCode) {
     const modal = new bootstrap.Modal(document.getElementById('apartmentModal'));
     modal.show();
 
-    const requestData = {
-        region_code: regionCode,
-        apt_name: aptName
-    };
-    console.log('📡 Step3 요청 데이터:', requestData);
-
     fetch('/api/search/step3', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify(requestData)
+        body: JSON.stringify({
+            region_code: regionCode,
+            apt_name: aptName
+        })
     })
     .then(response => response.json())
     .then(data => {
-        console.log('📊 Step3 응답:', data);
         if (data.success) {
-            console.log(`✅ 거래기록 ${data.transactions?.length || 0}건 조회`);
             displayTransactionHistory(data.transactions || []);
         } else {
-            console.error('❌ 거래기록 조회 실패:', data.message);
             document.getElementById('modalBody').innerHTML =
                 '<div class="alert alert-danger">거래기록을 불러오는데 실패했습니다.</div>';
         }
@@ -383,13 +376,6 @@ function showApartmentDetail(aptName, regionCode) {
         document.getElementById('modalBody').innerHTML =
             '<div class="alert alert-danger">거래기록을 불러오는 중 오류가 발생했습니다.</div>';
     });
-}
-
-// 데이터 속성을 사용한 아파트 상세 정보 표시 (특수문자 안전)
-function showApartmentDetailFromData(element) {
-    const aptName = element.getAttribute('data-apt-name');
-    const regionCode = element.getAttribute('data-region-code');
-    showApartmentDetail(aptName, regionCode);
 }
 
 // 거래기록 표시

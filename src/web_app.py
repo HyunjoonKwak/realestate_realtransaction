@@ -60,6 +60,7 @@ class ApartmentTrackerApp:
 
         self.setup_routes()
 
+
     def setup_routes(self):
         """라우트 설정"""
         self.logger.info("라우트 설정 시작")
@@ -429,7 +430,7 @@ class ApartmentTrackerApp:
                         'suggestion': '다른 지역을 선택하거나, 서울특별시나 인천광역시 등 대도시 지역을 시도해보세요.'
                     })
                 
-                # 데이터베이스에 저장 (캐시)
+                # 데이터베이스에 저장 (캐시 + 개별 거래기록)
                 region_name = f"{city} {district}"
                 self.db.save_search_cache(
                     region_code=region_code,
@@ -441,6 +442,30 @@ class ApartmentTrackerApp:
                     raw_data=api_data,
                     cache_hours=24
                 )
+
+                # 개별 거래기록도 transaction_data 테이블에 저장
+                for i, transaction in enumerate(api_data):
+                    try:
+                        # 데이터 타입 확인을 위한 디버깅
+                        if i == 0:  # 첫 번째 항목만 로깅
+                            self.logger.info(f"첫 번째 transaction 타입: {type(transaction)}")
+                            self.logger.info(f"첫 번째 transaction 내용: {str(transaction)[:200]}...")
+
+                        # 문자열인 경우 건너뛰기
+                        if isinstance(transaction, str):
+                            self.logger.warning(f"문자열 데이터 건너뛰기: {transaction[:50]}...")
+                            continue
+
+                        # 딕셔너리인 경우에만 처리
+                        if isinstance(transaction, dict):
+                            # region_name 추가
+                            transaction['region_name'] = region_name
+                            self.db.save_transaction_data(transaction)
+                        else:
+                            self.logger.warning(f"예상치 못한 데이터 타입: {type(transaction)}")
+                    except Exception as e:
+                        self.logger.error(f"거래 데이터 처리 중 오류: {e} - 타입: {type(transaction)}")
+                        continue
                 
                 # 법정동 목록과 아파트 목록 추출
                 dong_list = list(set([tx.get('umd_nm', '기타') for tx in api_data if tx.get('umd_nm')]))
@@ -495,26 +520,175 @@ class ApartmentTrackerApp:
             try:
                 if not self.db:
                     return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
-                
+
                 data = request.get_json()
                 region_code = data.get('region_code')
                 apt_name = data.get('apt_name')
-                
+
+                # 디버깅 로그 추가
+                self.logger.info(f"🏢 Step3 요청: 지역코드={region_code}, 아파트명={apt_name}")
+
                 if not region_code or not apt_name:
                     return jsonify({'success': False, 'message': '지역코드와 아파트명을 선택해주세요.'})
-                
+
                 # 해당 아파트의 거래기록 조회
                 transactions = self.db.get_apartment_transactions(region_code, apt_name)
-                
+
+                self.logger.info(f"📊 거래기록 조회 결과: {len(transactions)}건")
+
+                if len(transactions) == 0:
+                    # 디버깅을 위해 데이터베이스에서 직접 확인
+                    import sqlite3
+                    with sqlite3.connect(self.db.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute('SELECT COUNT(*) FROM transaction_data WHERE region_code = ?', (region_code,))
+                        region_count = cursor.fetchone()[0]
+                        cursor.execute('SELECT COUNT(*) FROM transaction_data WHERE apt_name = ?', (apt_name,))
+                        apt_count = cursor.fetchone()[0]
+                        self.logger.warning(f"❌ 거래기록 없음 - 지역코드 {region_code}: {region_count}건, 아파트명 '{apt_name}': {apt_count}건")
+
                 return jsonify({
                     'success': True,
                     'transactions': transactions,
                     'apt_name': apt_name
                 })
-                
+
             except Exception as e:
                 self.logger.error(f"3단계 검색 오류: {e}")
                 return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/cache/statistics')
+        def api_cache_statistics():
+            """캐시 통계 API"""
+            try:
+                if not self.db:
+                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
+
+                stats = self.db.get_cache_statistics()
+
+                return jsonify({
+                    'success': True,
+                    'statistics': stats
+                })
+
+            except Exception as e:
+                self.logger.error(f"캐시 통계 조회 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/cache/invalidate', methods=['POST'])
+        def api_cache_invalidate():
+            """캐시 무효화 API"""
+            try:
+                if not self.db:
+                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
+
+                data = request.get_json()
+                region_code = data.get('region_code') if data else None
+
+                affected_rows = self.db.invalidate_search_cache(region_code)
+
+                return jsonify({
+                    'success': True,
+                    'message': f'{affected_rows}건의 캐시가 무효화되었습니다.',
+                    'affected_rows': affected_rows
+                })
+
+            except Exception as e:
+                self.logger.error(f"캐시 무효화 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/test/direct', methods=['POST'])
+        def api_test_direct():
+            """직접 API 호출 테스트"""
+            try:
+                if not self.molit_api:
+                    return jsonify({'success': False, 'message': 'MOLIT API 연결 실패'})
+
+                data = request.get_json()
+                region_code = data.get('region_code')
+                deal_ymd = data.get('deal_ymd')
+
+                # 사용자 요청 데이터 로그
+                self.logger.info(f"🧪 API 테스트 요청 수신:")
+                self.logger.info(f"📋 사용자 입력 데이터:")
+                self.logger.info(f"   - 지역코드: {region_code}")
+                self.logger.info(f"   - 거래년월: {deal_ymd}")
+                self.logger.info(f"   - 클라이언트 IP: {request.remote_addr}")
+
+                if not region_code or not deal_ymd:
+                    self.logger.warning(f"❌ 필수 파라미터 누락 - 지역코드: {region_code}, 거래년월: {deal_ymd}")
+                    return jsonify({'success': False, 'message': '지역코드와 거래년월이 필요합니다.'})
+
+                # 직접 API 호출
+                self.logger.info(f"🚀 국토교통부 API 직접 호출 시작")
+                result = self.molit_api.get_apt_trade_data(region_code, deal_ymd)
+
+                # 원본 XML 응답도 가져오기
+                raw_xml = self.molit_api._get_raw_xml_response(region_code, deal_ymd)
+
+                return jsonify({
+                    'success': True,
+                    'data': result.get('data', []),
+                    'raw_xml': raw_xml,
+                    'original_request': {
+                        'method': request.method,
+                        'url': request.url,
+                        'path': request.path,
+                        'query_string': request.query_string.decode(),
+                        'headers': dict(request.headers),
+                        'content_type': request.content_type,
+                        'json_data': {
+                            'region_code': region_code,
+                            'deal_ymd': deal_ymd
+                        },
+                        'client_ip': request.remote_addr,
+                        'user_agent': request.user_agent.string,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'referrer': request.referrer,
+                        'scheme': request.scheme,
+                        'host': request.host,
+                        'is_secure': request.is_secure,
+                        'content_length': request.content_length
+                    },
+                    'request_info': {
+                        'region_code': region_code,
+                        'deal_ymd': deal_ymd,
+                        'client_ip': request.remote_addr,
+                        'timestamp': result.get('timestamp', ''),
+                        'region_name': self.molit_api.get_region_name(region_code) if self.molit_api else region_code
+                    },
+                    'summary': {
+                        'region_code': region_code,
+                        'deal_ymd': deal_ymd,
+                        'total_count': len(result.get('data', [])),
+                        'http_status': result.get('http_status', 'Unknown'),
+                        'api_success': result.get('success', False)
+                    }
+                })
+
+            except Exception as e:
+                self.logger.error(f"직접 API 테스트 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/test')
+        def api_test_page():
+            """API 테스트 페이지"""
+            return render_template('api_test.html')
+
+        @self.app.route('/test-simple')
+        def test_simple():
+            """간단한 테스트 페이지"""
+            return "API 테스트 페이지가 작동합니다!"
+
+        @self.app.route('/debug-routes')
+        def debug_routes():
+            """라우트 디버깅 페이지"""
+            routes = []
+            for rule in self.app.url_map.iter_rules():
+                routes.append(f"{rule.rule} -> {rule.endpoint}")
+            return "<br>".join(routes)
+
+        self.logger.info("라우트 설정 완료")
 
     def _extract_apartment_list(self, transactions):
         """거래 데이터에서 아파트 목록 추출"""
@@ -712,97 +886,6 @@ class ApartmentTrackerApp:
         ))
         
         return sorted_classified
-
-        @self.app.route('/api/cache/statistics')
-        def api_cache_statistics():
-            """캐시 통계 API"""
-            try:
-                if not self.db:
-                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
-                
-                stats = self.db.get_cache_statistics()
-                
-                return jsonify({
-                    'success': True,
-                    'statistics': stats
-                })
-                
-            except Exception as e:
-                self.logger.error(f"캐시 통계 조회 오류: {e}")
-                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
-
-        @self.app.route('/api/cache/invalidate', methods=['POST'])
-        def api_cache_invalidate():
-            """캐시 무효화 API"""
-            try:
-                if not self.db:
-                    return jsonify({'success': False, 'message': '데이터베이스 연결 실패'})
-                
-                data = request.get_json()
-                region_code = data.get('region_code') if data else None
-                
-                affected_rows = self.db.invalidate_search_cache(region_code)
-                
-                return jsonify({
-                    'success': True,
-                    'message': f'{affected_rows}건의 캐시가 무효화되었습니다.',
-                    'affected_rows': affected_rows
-                })
-                
-            except Exception as e:
-                self.logger.error(f"캐시 무효화 오류: {e}")
-                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
-
-        @self.app.route('/api/test/direct', methods=['POST'])
-        def api_test_direct():
-            """직접 API 호출 테스트"""
-            try:
-                if not self.molit_api:
-                    return jsonify({'success': False, 'message': 'MOLIT API 연결 실패'})
-                
-                data = request.get_json()
-                region_code = data.get('region_code')
-                deal_ymd = data.get('deal_ymd')
-                
-                if not region_code or not deal_ymd:
-                    return jsonify({'success': False, 'message': '지역코드와 거래년월이 필요합니다.'})
-                
-                # 직접 API 호출
-                self.logger.info(f"직접 API 테스트: 지역코드={region_code}, 거래년월={deal_ymd}")
-                result = self.molit_api.get_apt_trade_data(region_code, deal_ymd)
-                
-                # 원본 XML 응답도 가져오기
-                raw_xml = self.molit_api._get_raw_xml_response(region_code, deal_ymd)
-                
-                return jsonify({
-                    'success': True,
-                    'data': result.get('data', []),
-                    'raw_xml': raw_xml,
-                    'summary': {
-                        'region_code': region_code,
-                        'deal_ymd': deal_ymd,
-                        'total_count': len(result.get('data', [])),
-                        'http_status': result.get('http_status', 'Unknown'),
-                        'api_success': result.get('success', False)
-                    }
-                })
-                
-            except Exception as e:
-                self.logger.error(f"직접 API 테스트 오류: {e}")
-                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
-
-        @self.app.route('/api/test')
-        def api_test_page():
-            """API 테스트 페이지"""
-            return render_template('api_test.html')
-        
-        @self.app.route('/test-simple')
-        def test_simple():
-            """간단한 테스트 페이지"""
-            return "API 테스트 페이지가 작동합니다!"
-        
-        self.logger.info("라우트 설정 완료")
-
 
     def run(self, host=None, port=None, debug=None):
         """웹 서버 실행"""

@@ -223,14 +223,21 @@ class ApartmentDatabase:
             self.logger.error(f"관심단지 제거 실패: {e}")
             return False
 
-    def save_transaction_data(self, transactions: List[Dict]) -> int:
+    def save_transaction_data(self, transactions) -> int:
         """실거래가 데이터 저장"""
         saved_count = 0
-        
+
+        # 단일 딕셔너리인 경우 리스트로 변환
+        if isinstance(transactions, dict):
+            transactions = [transactions]
+        elif not isinstance(transactions, list):
+            self.logger.error(f"잘못된 데이터 타입: {type(transactions)}")
+            return 0
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
+
                 for tx in transactions:
                     try:
                         cursor.execute('''
@@ -621,9 +628,10 @@ class ApartmentDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                
+
+                # 정확한 매칭 시도
                 cursor.execute('''
-                    SELECT 
+                    SELECT
                         deal_date,
                         deal_amount,
                         exclusive_area,
@@ -633,13 +641,39 @@ class ApartmentDatabase:
                         region_name,
                         umd_nm,
                         build_year
-                    FROM transaction_data 
+                    FROM transaction_data
                     WHERE region_code = ? AND apt_name = ?
                     ORDER BY deal_date DESC
                 ''', (region_code, apt_name))
+
+                rows = cursor.fetchall()
+
+                # 정확한 매칭이 실패한 경우 유사한 이름으로 검색
+                if not rows:
+                    # 공백과 특수문자를 제거한 후 LIKE 검색
+                    cleaned_apt_name = apt_name.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                    cursor.execute('''
+                        SELECT
+                            deal_date,
+                            deal_amount,
+                            exclusive_area,
+                            price_per_area,
+                            floor,
+                            apt_name,
+                            region_name,
+                            umd_nm,
+                            build_year
+                        FROM transaction_data
+                        WHERE region_code = ? AND (
+                            apt_name LIKE ? OR
+                            REPLACE(REPLACE(REPLACE(REPLACE(apt_name, ' ', ''), '-', ''), '(', ''), ')', '') LIKE ?
+                        )
+                        ORDER BY deal_date DESC
+                    ''', (region_code, f'%{apt_name}%', f'%{cleaned_apt_name}%'))
+                    rows = cursor.fetchall()
                 
                 transactions = []
-                for row in cursor.fetchall():
+                for row in rows:
                     transactions.append({
                         'deal_date': row['deal_date'],
                         'deal_amount': row['deal_amount'],

@@ -1,0 +1,130 @@
+{
+  "metadata": {
+    "created_date": "2025-09-18",
+    "source_file": "dong_code_active.txt",
+    "total_active_entries": 20555,
+    "description": "Administrative region labels for Korean legal dong codes"
+  },
+  "administrative_levels": {
+    "sido": {
+      "pattern": "xxxxxxxxxx with last 8 digits = 0",
+      "description": "City/Province level",
+      "examples": ["1100000000", "2600000000", "4100000000"]
+    },
+    "sigungu": {
+      "pattern": "xxxxxxxxxx with last 5 digits = 0 (excluding sido)",
+      "description": "District/County level",
+      "examples": ["1111000000", "1114000000", "4111000000"]
+    },
+    "eupmyeondong": {
+      "pattern": "xxxxxxxxxx with last 2 digits = 0 (excluding sigungu)",
+      "description": "Town/Township/District level",
+      "examples": ["1111010000", "1114010000", "4111010000"]
+    },
+    "beopjeongdong": {
+      "pattern": "xxxxxxxxxx with all digits used",
+      "description": "Legal dong level (finest administrative unit)",
+      "examples": ["1111010100", "1114010100", "4111010100"]
+    }
+  },
+  "major_regions": {
+    "seoul": {
+      "code": "1100000000",
+      "name": "서울특별시",
+      "type": "special_city"
+    },
+    "busan": {
+      "code": "2600000000",
+      "name": "부산광역시",
+      "type": "metropolitan_city"
+    },
+    "daegu": {
+      "code": "2700000000",
+      "name": "대구광역시",
+      "type": "metropolitan_city"
+    },
+    "incheon": {
+      "code": "2800000000",
+      "name": "인천광역시",
+      "type": "metropolitan_city"
+    },
+    "gwangju": {
+      "code": "2900000000",
+      "name": "광주광역시",
+      "type": "metropolitan_city"
+    },
+    "daejeon": {
+      "code": "3000000000",
+      "name": "대전광역시",
+      "type": "metropolitan_city"
+    },
+    "ulsan": {
+      "code": "3100000000",
+      "name": "울산광역시",
+      "type": "metropolitan_city"
+    },
+    "sejong": {
+      "code": "3600000000",
+      "name": "세종특별자치시",
+      "type": "special_autonomous_city"
+    },
+    "gyeonggi": {
+      "code": "4100000000",
+      "name": "경기도",
+      "type": "province"
+    },
+    "gangwon": {
+      "code": "5100000000",
+      "name": "강원특별자치도",
+      "type": "special_autonomous_province"
+    },
+    "chungbuk": {
+      "code": "4300000000",
+      "name": "충청북도",
+      "type": "province"
+    },
+    "chungnam": {
+      "code": "4400000000",
+      "name": "충청남도",
+      "type": "province"
+    },
+    "jeonbuk": {
+      "code": "4500000000",
+      "name": "전라북도",
+      "type": "province"
+    },
+    "jeonnam": {
+      "code": "4600000000",
+      "name": "전라남도",
+      "type": "province"
+    },
+    "gyeongbuk": {
+      "code": "4700000000",
+      "name": "경상북도",
+      "type": "province"
+    },
+    "gyeongnam": {
+      "code": "4800000000",
+      "name": "경상남도",
+      "type": "province"
+    },
+    "jeju": {
+      "code": "5000000000",
+      "name": "제주특별자치도",
+      "type": "special_autonomous_province"
+    }
+  },
+  "usage_instructions": {
+    "filtering": {
+      "sido_level": "Filter codes where last 8 digits are '00000000'",
+      "sigungu_level": "Filter codes where last 5 digits are '00000' but not sido level",
+      "eupmyeondong_level": "Filter codes where last 2 digits are '00' but not sigungu level",
+      "beopjeongdong_level": "All remaining codes (finest level)"
+    },
+    "integration": {
+      "database": "Use codes as foreign keys in apartment database",
+      "api": "Use codes for Ministry of Land API region parameter",
+      "frontend": "Use names for dropdown labels and display"
+    }
+  }
+}

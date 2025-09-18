@@ -29,8 +29,8 @@
                     <div class="col-md-6">
                         <div class="mb-3">
                             <label for="regionCode" class="form-label">지역코드 (5자리)</label>
-                            <input type="text" class="form-control" id="regionCode" placeholder="예: 45110" maxlength="5">
-                            <div class="form-text">전라북도 전주시: 45110, 서울 강남구: 11680</div>
+                            <input type="text" class="form-control" id="regionCode" placeholder="예: 52113" maxlength="5">
+                            <div class="form-text">전북특별자치도 전주시: 52113, 서울 강남구: 11680</div>
                         </div>
                     </div>
                     <div class="col-md-6">
@@ -75,11 +75,28 @@
                     </h5>
                 </div>
                 <div class="card-body">
-                    <!-- 요약 정보 -->
-                    <div class="row mb-3" id="summaryInfo">
-                        <!-- 동적으로 채워짐 -->
+                    <!-- 요청 정보 -->
+                    <div class="mb-3">
+                        <h6><i class="fas fa-paper-plane me-2"></i>요청 정보</h6>
+                        <div class="row" id="requestInfo">
+                            <!-- 동적으로 채워짐 -->
+                        </div>
                     </div>
-                    
+
+                    <!-- 요약 정보 -->
+                    <div class="mb-3">
+                        <h6><i class="fas fa-chart-bar me-2"></i>응답 요약</h6>
+                        <div class="row" id="summaryInfo">
+                            <!-- 동적으로 채워짐 -->
+                        </div>
+                    </div>
+
+                    <!-- 원본 요청 -->
+                    <div class="mb-3">
+                        <h6><i class="fas fa-upload me-2"></i>원본 요청 데이터</h6>
+                        <pre id="rawRequest" class="bg-info bg-opacity-10 p-3 border border-info border-opacity-25" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;"></pre>
+                    </div>
+
                     <!-- 원본 응답 -->
                     <div class="mb-3">
                         <h6><i class="fas fa-code me-2"></i>원본 XML 응답</h6>
@@ -154,20 +171,27 @@ function performApiTest() {
     showLoading();
     hideError();
     hideResults();
-    
+
+    // 요청 데이터 저장
+    const requestData = {
+        region_code: regionCode,
+        deal_ymd: dealYmd
+    };
+
     $.ajax({
         url: '/api/test/direct',
         method: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify({
-            region_code: regionCode,
-            deal_ymd: dealYmd
-        }),
+        data: JSON.stringify(requestData),
         success: function(response) {
             hideLoading();
             console.log('API 테스트 응답:', response);
-            
+
             if (response.success) {
+                // 응답에 이미 original_request가 없는 경우에만 추가 (구 버전 호환성)
+                if (!response.original_request) {
+                    response.original_request = requestData;
+                }
                 displayResults(response);
             } else {
                 showError(response.message || 'API 호출에 실패했습니다.');
@@ -185,8 +209,51 @@ function displayResults(response) {
     const data = response.data;
     const rawXml = response.raw_xml;
     const summary = response.summary;
-    
-    // 요약 정보 표시
+    const requestInfo = response.request_info;
+
+    // 요청 정보 표시
+    const requestHtml = `
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body text-center">
+                    <h6 class="card-title">지역코드</h6>
+                    <h5>${requestInfo.region_code}</h5>
+                    <small>${requestInfo.region_name || requestInfo.region_code}</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body text-center">
+                    <h6 class="card-title">거래년월</h6>
+                    <h5>${requestInfo.deal_ymd}</h5>
+                    <small>${requestInfo.deal_ymd.substring(0,4)}년 ${requestInfo.deal_ymd.substring(4,6)}월</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body text-center">
+                    <h6 class="card-title">클라이언트 IP</h6>
+                    <h5>${requestInfo.client_ip}</h5>
+                    <small>요청 출처</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-secondary text-white">
+                <div class="card-body text-center">
+                    <h6 class="card-title">요청 시간</h6>
+                    <h5>${new Date().toLocaleTimeString()}</h5>
+                    <small>현재 시각</small>
+                </div>
+            </div>
+        </div>
+    `;
+
+    $('#requestInfo').html(requestHtml);
+
+    // 응답 요약 정보 표시
     const summaryHtml = `
         <div class="col-md-3">
             <div class="card bg-light">
@@ -223,7 +290,13 @@ function displayResults(response) {
     `;
     
     $('#summaryInfo').html(summaryHtml);
-    
+
+    // 원본 요청 데이터 표시
+    if (response.original_request) {
+        const requestJson = JSON.stringify(response.original_request, null, 2);
+        $('#rawRequest').text(requestJson);
+    }
+
     // 원본 XML 표시
     $('#rawResponse').text(rawXml);
     

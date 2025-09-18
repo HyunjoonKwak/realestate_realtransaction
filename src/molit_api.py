@@ -32,280 +32,411 @@ class MolitRealEstateAPI:
         self.timeout = int(os.getenv('API_TIMEOUT', '15'))
         self.max_retries = int(os.getenv('API_MAX_RETRIES', '3'))
 
-        # 로깅 설정
-        log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-        logging.basicConfig(
-            level=getattr(logging, log_level, logging.INFO),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        # 로깅 설정 - 전역 설정을 덮어쓰지 않도록 수정
         self.logger = logging.getLogger(__name__)
+
+        # 로거가 이미 설정되어 있지 않은 경우에만 핸들러 추가
+        if not self.logger.handlers:
+            log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+            self.logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+            # 콘솔 핸들러 추가
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(getattr(logging, log_level, logging.INFO))
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+
+            # 중복 출력 방지
+            self.logger.propagate = False
 
         # 시-군-구 계층적 지역 데이터 구조
         self.region_hierarchy = {
-            '서울특별시': {
-                '종로구': '11110',
-                '중구': '11140', 
-                '용산구': '11170',
-                '성동구': '11200',
-                '광진구': '11215',
-                '동대문구': '11230',
-                '중랑구': '11260',
-                '성북구': '11290',
-                '강북구': '11305',
-                '도봉구': '11320',
-                '노원구': '11350',
-                '은평구': '11380',
-                '서대문구': '11410',
-                '마포구': '11440',
-                '양천구': '11470',
-                '강서구': '11500',
-                '구로구': '11530',
-                '금천구': '11545',
-                '영등포구': '11560',
-                '동작구': '11590',
-                '관악구': '11620',
-                '서초구': '11650',
-                '강남구': '11680',
-                '송파구': '11710',
-                '강동구': '11740'
+            '강원특별자치도': {
+                '강릉시': '51150',
+                '고성군': '51820',
+                '동해시': '51170',
+                '삼척시': '51230',
+                '속초시': '51210',
+                '양구군': '51800',
+                '양양군': '51830',
+                '영월군': '51750',
+                '원주시': '51130',
+                '인제군': '51810',
+                '정선군': '51770',
+                '철원군': '51780',
+                '춘천시': '51110',
+                '태백시': '51190',
+                '평창군': '51760',
+                '홍천군': '51720',
+                '화천군': '51790',
+                '횡성군': '51730',
             },
             '경기도': {
-                '수원시': '41110',
-                '성남시': '41130',
-                '의정부시': '41150',
-                '안양시': '41170',
-                '부천시': '41190',
-                '광명시': '41210',
-                '평택시': '41220',
-                '과천시': '41290',
-                '오산시': '41370',
-                '시흥시': '41390',
-                '군포시': '41410',
-                '고양시': '41280',
-                '의왕시': '41430',
-                '하남시': '41450',
-                '용인시': '41460',
-                '파주시': '41480',
-                '이천시': '41500',
-                '안성시': '41550',
-                '김포시': '41570',
-                '화성시': '41590',
-                '광주시': '41610',
-                '여주시': '41670',
-                '양평군': '41830',
                 '가평군': '41820',
-                '연천군': '41800'
+                '고양시': {
+                    '_main': '41280',
+                    '덕양구': '41281',
+                    '일산동구': '41285',
+                    '일산서구': '41287',
+                },
+                '과천시': '41290',
+                '광명시': '41210',
+                '광주시': '41610',
+                '구리시': '41310',
+                '군포시': '41410',
+                '김포시': '41570',
+                '남양주시': '41360',
+                '동두천시': '41250',
+                '부천시': '41190',
+                '성남시': {
+                    '_main': '41130',
+                    '분당구': '41135',
+                    '수정구': '41131',
+                    '중원구': '41133',
+                },
+                '수원시': {
+                    '_main': '41110',
+                    '권선구': '41113',
+                    '영통구': '41117',
+                    '장안구': '41111',
+                    '팔달구': '41115',
+                },
+                '시흥시': '41390',
+                '안산시': {
+                    '_main': '41270',
+                    '단원구': '41273',
+                    '상록구': '41271',
+                },
+                '안성시': '41550',
+                '안양시': {
+                    '_main': '41170',
+                    '동안구': '41173',
+                    '만안구': '41171',
+                },
+                '양주시': '41630',
+                '양평군': '41830',
+                '여주시': '41670',
+                '연천군': '41800',
+                '오산시': '41370',
+                '용인시': {
+                    '_main': '41460',
+                    '기흥구': '41463',
+                    '수지구': '41465',
+                    '처인구': '41461',
+                },
+                '의왕시': '41430',
+                '의정부시': '41150',
+                '이천시': '41500',
+                '파주시': '41480',
+                '평택시': '41220',
+                '포천시': '41650',
+                '하남시': '41450',
+                '화성시': '41590',
             },
-            '인천광역시': {
-                '중구': '28110',
-                '동구': '28140',
-                '미추홀구': '28177',
-                '연수구': '28185',
-                '남동구': '28200',
-                '부평구': '28237',
-                '계양구': '28245',
-                '서구': '28260',
-                '강화군': '28710',
-                '옹진군': '28720'
+            '경상남도': {
+                '거제시': '48310',
+                '거창군': '48880',
+                '고성군': '48820',
+                '김해시': '48250',
+                '남해군': '48840',
+                '밀양시': '48270',
+                '사천시': '48240',
+                '산청군': '48860',
+                '양산시': '48330',
+                '의령군': '48720',
+                '진주시': '48170',
+                '창녕군': '48740',
+                '창원시': {
+                    '_main': '48120',
+                    '마산합포구': '48125',
+                    '마산회원구': '48127',
+                    '성산구': '48123',
+                    '의창구': '48121',
+                    '진해구': '48129',
+                },
+                '통영시': '48220',
+                '하동군': '48850',
+                '함안군': '48730',
+                '함양군': '48870',
+                '합천군': '48890',
             },
-            '부산광역시': {
-                '중구': '26110',
-                '서구': '26140',
-                '동구': '26170',
-                '영도구': '26200',
-                '부산진구': '26230',
-                '동래구': '26260',
-                '남구': '26290',
-                '북구': '26320',
-                '해운대구': '26350',
-                '사하구': '26380',
-                '금정구': '26410',
-                '강서구': '26440',
-                '연제구': '26470',
-                '수영구': '26500',
-                '사상구': '26530',
-                '기장군': '26710'
-            },
-            '대구광역시': {
-                '중구': '27110',
-                '동구': '27140',
-                '서구': '27170',
-                '남구': '27200',
-                '북구': '27230',
-                '수성구': '27260',
-                '달서구': '27290',
-                '달성군': '27710'
+            '경상북도': {
+                '경산시': '47290',
+                '경주시': '47130',
+                '고령군': '47830',
+                '구미시': '47190',
+                '김천시': '47150',
+                '문경시': '47280',
+                '봉화군': '47920',
+                '상주시': '47250',
+                '성주군': '47840',
+                '안동시': '47170',
+                '영덕군': '47770',
+                '영양군': '47760',
+                '영주시': '47210',
+                '영천시': '47230',
+                '예천군': '47900',
+                '울릉군': '47940',
+                '울진군': '47930',
+                '의성군': '47730',
+                '청도군': '47820',
+                '청송군': '47750',
+                '칠곡군': '47850',
+                '포항시': {
+                    '_main': '47110',
+                    '남구': '47111',
+                    '북구': '47113',
+                },
             },
             '광주광역시': {
+                '광산구': '29200',
+                '남구': '29155',
                 '동구': '29110',
+                '북구': '29170',
                 '서구': '29140',
-                '남구': '29170',
-                '북구': '29200',
-                '광산구': '29230'
+            },
+            '대구광역시': {
+                '군위군': '27720',
+                '남구': '27200',
+                '달서구': '27290',
+                '달성군': '27710',
+                '동구': '27140',
+                '북구': '27230',
+                '서구': '27170',
+                '수성구': '27260',
+                '중구': '27110',
             },
             '대전광역시': {
+                '대덕구': '30230',
                 '동구': '30110',
-                '중구': '30140',
                 '서구': '30170',
                 '유성구': '30200',
-                '대덕구': '30230'
+                '중구': '30140',
             },
-            '울산광역시': {
-                '중구': '31110',
-                '남구': '31140',
-                '동구': '31170',
-                '북구': '31200',
-                '울주군': '31710'
+            '부산광역시': {
+                '강서구': '26440',
+                '금정구': '26410',
+                '기장군': '26710',
+                '남구': '26290',
+                '동구': '26170',
+                '동래구': '26260',
+                '부산진구': '26230',
+                '북구': '26320',
+                '사상구': '26530',
+                '사하구': '26380',
+                '서구': '26140',
+                '수영구': '26500',
+                '연제구': '26470',
+                '영도구': '26200',
+                '중구': '26110',
+                '해운대구': '26350',
+            },
+            '서울특별시': {
+                '강남구': '11680',
+                '강동구': '11740',
+                '강북구': '11305',
+                '강서구': '11500',
+                '관악구': '11620',
+                '광진구': '11215',
+                '구로구': '11530',
+                '금천구': '11545',
+                '노원구': '11350',
+                '도봉구': '11320',
+                '동대문구': '11230',
+                '동작구': '11590',
+                '마포구': '11440',
+                '서대문구': '11410',
+                '서초구': '11650',
+                '성동구': '11200',
+                '성북구': '11290',
+                '송파구': '11710',
+                '양천구': '11470',
+                '영등포구': '11560',
+                '용산구': '11170',
+                '은평구': '11380',
+                '종로구': '11110',
+                '중구': '11140',
+                '중랑구': '11260',
             },
             '세종특별자치시': {
                 '세종시': '36110'
             },
-            '강원특별자치도': {
-                '춘천시': '51110',
-                '원주시': '51130',
-                '강릉시': '51150',
-                '동해시': '51170',
-                '태백시': '51190',
-                '속초시': '51210',
-                '삼척시': '51230',
-                '홍천군': '51720',
-                '횡성군': '51730',
-                '영월군': '51750',
-                '평창군': '51760',
-                '정선군': '51770',
-                '철원군': '51780',
-                '화천군': '51790',
-                '양구군': '51800',
-                '인제군': '51810',
-                '고성군': '51820',
-                '양양군': '51830'
+            '울산광역시': {
+                '남구': '31140',
+                '동구': '31170',
+                '북구': '31200',
+                '울주군': '31710',
+                '중구': '31110',
             },
-            '충청북도': {
-                '청주시': '43110',
-                '충주시': '43130',
-                '제천시': '43150',
-                '보은군': '43720',
-                '옥천군': '43730',
-                '영동군': '43740',
-                '증평군': '43745',
-                '진천군': '43750',
-                '괴산군': '43760',
-                '음성군': '43770',
-                '단양군': '43800'
-            },
-            '충청남도': {
-                '천안시': '44130',
-                '공주시': '44150',
-                '보령시': '44180',
-                '아산시': '44200',
-                '서산시': '44210',
-                '논산시': '44230',
-                '계룡시': '44250',
-                '당진시': '44270',
-                '금산군': '44710',
-                '부여군': '44760',
-                '서천군': '44770',
-                '청양군': '44790',
-                '홍성군': '44800',
-                '예산군': '44810',
-                '태안군': '44825'
-            },
-            '전라북도': {
-                '전주시': '45110',
-                '군산시': '45130',
-                '익산시': '45140',
-                '정읍시': '45180',
-                '남원시': '45190',
-                '김제시': '45210',
-                '완주군': '45710',
-                '진안군': '45720',
-                '무주군': '45730',
-                '장수군': '45740',
-                '임실군': '45750',
-                '순창군': '45770',
-                '고창군': '45790',
-                '부안군': '45800'
+            '인천광역시': {
+                '강화군': '28710',
+                '계양구': '28245',
+                '남동구': '28200',
+                '동구': '28140',
+                '미추홀구': '28177',
+                '부평구': '28237',
+                '서구': '28260',
+                '연수구': '28185',
+                '옹진군': '28720',
+                '중구': '28110',
             },
             '전라남도': {
-                '목포시': '46110',
-                '여수시': '46130',
-                '순천시': '46150',
-                '나주시': '46170',
-                '광양시': '46230',
-                '담양군': '46710',
-                '곡성군': '46720',
-                '구례군': '46730',
-                '고흥군': '46770',
-                '보성군': '46780',
-                '화순군': '46790',
-                '장흥군': '46800',
                 '강진군': '46810',
-                '해남군': '46820',
-                '영암군': '46830',
+                '고흥군': '46770',
+                '곡성군': '46720',
+                '광양시': '46230',
+                '구례군': '46730',
+                '나주시': '46170',
+                '담양군': '46710',
+                '목포시': '46110',
                 '무안군': '46840',
-                '함평군': '46860',
+                '보성군': '46780',
+                '순천시': '46150',
+                '신안군': '46910',
+                '여수시': '46130',
                 '영광군': '46870',
-                '장성군': '46880',
+                '영암군': '46830',
                 '완도군': '46890',
+                '장성군': '46880',
+                '장흥군': '46800',
                 '진도군': '46900',
-                '신안군': '46910'
+                '함평군': '46860',
+                '해남군': '46820',
+                '화순군': '46790',
             },
-            '경상북도': {
-                '포항시': '47110',
-                '경주시': '47130',
-                '김천시': '47150',
-                '안동시': '47170',
-                '구미시': '47190',
-                '영주시': '47210',
-                '영천시': '47230',
-                '상주시': '47250',
-                '문경시': '47280',
-                '경산시': '47290',
-                '군위군': '47720',
-                '의성군': '47730',
-                '청송군': '47750',
-                '영양군': '47760',
-                '영덕군': '47770',
-                '청도군': '47820',
-                '고령군': '47830',
-                '성주군': '47840',
-                '칠곡군': '47850',
-                '예천군': '47900',
-                '봉화군': '47920',
-                '울진군': '47930',
-                '울릉군': '47940'
-            },
-            '경상남도': {
-                '창원시': '48120',
-                '진주시': '48170',
-                '통영시': '48220',
-                '사천시': '48240',
-                '김해시': '48250',
-                '밀양시': '48270',
-                '거제시': '48310',
-                '양산시': '48330',
-                '의령군': '48720',
-                '함안군': '48730',
-                '창녕군': '48740',
-                '고성군': '48820',
-                '남해군': '48840',
-                '하동군': '48850',
-                '산청군': '48860',
-                '함양군': '48870',
-                '거창군': '48880',
-                '합천군': '48890'
+            '전북특별자치도': {
+                '고창군': '52790',
+                '군산시': '52130',
+                '김제시': '52210',
+                '남원시': '52190',
+                '무주군': '52730',
+                '부안군': '52800',
+                '순창군': '52770',
+                '완주군': '52710',
+                '익산시': '52140',
+                '임실군': '52750',
+                '장수군': '52740',
+                '전주시': {
+                    '_main': '52110',
+                    '덕진구': '52113',
+                    '완산구': '52111',
+                },
+                '정읍시': '52180',
+                '진안군': '52720',
             },
             '제주특별자치도': {
+                '서귀포시': '50130',
                 '제주시': '50110',
-                '서귀포시': '50130'
-            }
+            },
+            '충청남도': {
+                '계룡시': '44250',
+                '공주시': '44150',
+                '금산군': '44710',
+                '논산시': '44230',
+                '당진시': '44270',
+                '보령시': '44180',
+                '부여군': '44760',
+                '서산시': '44210',
+                '서천군': '44770',
+                '아산시': '44200',
+                '예산군': '44810',
+                '천안시': {
+                    '_main': '44130',
+                    '동남구': '44131',
+                    '서북구': '44133',
+                },
+                '청양군': '44790',
+                '태안군': '44825',
+                '홍성군': '44800',
+            },
+            '충청북도': {
+                '괴산군': '43760',
+                '단양군': '43800',
+                '보은군': '43720',
+                '영동군': '43740',
+                '옥천군': '43730',
+                '음성군': '43770',
+                '제천시': '43150',
+                '증평군': '43745',
+                '진천군': '43750',
+                '청주시': {
+                    '_main': '43110',
+                    '상당구': '43111',
+                    '서원구': '43112',
+                    '청원구': '43114',
+                    '흥덕구': '43113',
+                },
+                '충주시': '43130',
+            },
         }
 
         # 기존 호환성을 위한 단순 매핑도 유지
         self.region_codes = {}
         for city, districts in self.region_hierarchy.items():
-            for district, code in districts.items():
-                self.region_codes[code] = f"{city} {district}"
+            for district, code_or_dict in districts.items():
+                if isinstance(code_or_dict, str):
+                    # 단순 코드
+                    self.region_codes[code_or_dict] = f"{city} {district}"
+                elif isinstance(code_or_dict, dict):
+                    # 중첩된 구조
+                    for sub_district, sub_code in code_or_dict.items():
+                        if sub_district == '_main':
+                            self.region_codes[sub_code] = f"{city} {district}"
+                        else:
+                            self.region_codes[sub_code] = f"{city} {district} {sub_district}"
+
+        # HTTP 세션 초기화 (재사용을 위해)
+        self._init_http_session()
+
+    def _init_http_session(self):
+        """HTTP 세션 초기화"""
+        self.session = requests.Session()
+
+        # 기본 헤더 설정
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/xml, text/xml, */*',
+            'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
+            'Connection': 'keep-alive'
+        })
+
+        # SSL 검증 활성화
+        self.session.verify = True
+
+        # SSL/TLS 설정을 위한 추가 구성
+        try:
+            import ssl
+            import urllib3
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            from urllib3.util.ssl_ import create_urllib3_context
+
+            # 정부 API와 호환되는 SSL 컨텍스트 생성
+            context = create_urllib3_context()
+            context.set_ciphers('DEFAULT@SECLEVEL=1')  # 보안 레벨을 낮춰서 호환성 향상
+            context.minimum_version = ssl.TLSVersion.TLSv1_2  # TLS 1.2 이상 사용
+
+            retry_strategy = Retry(
+                total=self.max_retries,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "OPTIONS"],
+                backoff_factor=1
+            )
+
+            # SSL 컨텍스트를 사용하는 HTTPAdapter 생성
+            class SSLAdapter(HTTPAdapter):
+                def init_poolmanager(self, *args, **kwargs):
+                    kwargs['ssl_context'] = context
+                    return super().init_poolmanager(*args, **kwargs)
+
+            adapter = SSLAdapter(max_retries=retry_strategy)
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
+
+            self.logger.debug("HTTP 세션 초기화 완료")
+        except Exception as e:
+            self.logger.warning(f"HTTP 어댑터 설정 실패: {e}")
 
     def get_region_name(self, region_code: str) -> str:
         """지역코드로 지역명 조회"""
@@ -331,48 +462,29 @@ class MolitRealEstateAPI:
             # API URL 구성
             url = f"{self.base_url}?serviceKey={self.service_key}&LAWD_CD={lawd_cd}&DEAL_YMD={deal_ymd}&pageNo={page_no}&numOfRows={num_of_rows}"
 
-            self.logger.info(f"국토교통부 API 호출: 지역={lawd_cd}({self.get_region_name(lawd_cd)}), 기간={deal_ymd}")
-            self.logger.debug(f"URL: {url}")
+            self.logger.info(f"🏢 국토교통부 API 호출: 지역={lawd_cd}({self.get_region_name(lawd_cd)}), 기간={deal_ymd}")
+            self.logger.info(f"📊 요청 파라미터: 페이지={page_no}, 조회건수={num_of_rows}")
+            self.logger.debug(f"🔗 전체 URL: {url}")
 
-            # HTTP 헤더 설정
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'application/xml, text/xml, */*',
-                'Accept-Language': 'ko-KR,ko;q=0.8,en-US;q=0.5,en;q=0.3',
-                'Connection': 'keep-alive'
-            }
-
-            # SSL 설정 개선 (공공 API 호출용)
-            session = requests.Session()
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            
-            # SSL 검증 비활성화 (공공 API 호출용)
-            session.verify = False
-            
-            # SSL 컨텍스트 설정 (macOS 호환성)
+            # 재사용 가능한 세션 사용
+            # SSL 검증으로 먼저 시도
             try:
-                from requests.adapters import HTTPAdapter
-                from urllib3.util.ssl_ import create_urllib3_context
-                import ssl
-
-                class CustomSSLAdapter(HTTPAdapter):
-                    def init_poolmanager(self, *args, **kwargs):
-                        context = create_urllib3_context()
-                        context.check_hostname = False
-                        context.verify_mode = ssl.CERT_NONE
-                        # macOS 호환성을 위한 SSL 설정
-                        context.set_ciphers('DEFAULT:@SECLEVEL=0')
-                        kwargs['ssl_context'] = context
-                        return super().init_poolmanager(*args, **kwargs)
-
-                session.mount('https://', CustomSSLAdapter())
-                self.logger.debug("SSL 어댑터 설정 완료")
-            except Exception as e:
-                self.logger.warning(f"SSL 어댑터 설정 실패: {e}")
-                # 기본 설정으로 fallback
-
-            response = session.get(url, headers=headers, timeout=self.timeout)
+                response = self.session.get(url, timeout=self.timeout)
+            except requests.exceptions.SSLError as ssl_error:
+                self.logger.warning(f"SSL 인증서 오류 발생, 인증서 검증 비활성화로 재시도: {ssl_error}")
+                # SSL 오류 시에만 검증 비활성화
+                import urllib3
+                original_verify = self.session.verify
+                self.session.verify = False
+                try:
+                    with urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning):
+                        response = self.session.get(url, timeout=self.timeout)
+                finally:
+                    # 원래 설정 복원
+                    self.session.verify = original_verify
+            except requests.exceptions.ConnectionError as conn_error:
+                self.logger.error(f"연결 오류: {conn_error}")
+                raise
 
             # 응답 상태 확인
             self.logger.info(f"HTTP 상태코드: {response.status_code}")
@@ -422,11 +534,27 @@ class MolitRealEstateAPI:
             transactions = []
             
             for item in items:
-                # 거래일 생성 및 유효성 검사
-                deal_year = int(self._get_xml_text(item, 'dealYear', '0'))
-                deal_month = int(self._get_xml_text(item, 'dealMonth', '0'))
-                deal_day = int(self._get_xml_text(item, 'dealDay', '0'))
-                deal_date = f"{deal_year}-{deal_month:0>2}-{deal_day:0>2}"
+                # 거래일 생성 및 유효성 검사 - 예외 처리 추가
+                try:
+                    deal_year = int(self._get_xml_text(item, 'dealYear', '0'))
+                    deal_month = int(self._get_xml_text(item, 'dealMonth', '0'))
+                    deal_day = int(self._get_xml_text(item, 'dealDay', '0'))
+
+                    # 유효한 날짜 범위 검사
+                    if not (1900 <= deal_year <= 2100):
+                        self.logger.warning(f"유효하지 않은 연도: {deal_year}")
+                        continue
+                    if not (1 <= deal_month <= 12):
+                        self.logger.warning(f"유효하지 않은 월: {deal_month}")
+                        continue
+                    if not (1 <= deal_day <= 31):
+                        self.logger.warning(f"유효하지 않은 일: {deal_day}")
+                        continue
+
+                    deal_date = f"{deal_year}-{deal_month:0>2}-{deal_day:0>2}"
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"날짜 파싱 오류: {e}, 해당 거래 건너뜀")
+                    continue
                 
                 # 미래 거래일 필터링
                 from datetime import datetime
@@ -439,22 +567,47 @@ class MolitRealEstateAPI:
                     self.logger.warning(f"잘못된 거래일 형식: {deal_date}")
                     continue
                 
+                # 숫자 필드들에 안전한 파싱 적용
+                try:
+                    build_year = int(self._get_xml_text(item, 'buildYear', '0'))
+                    exclusive_area = float(self._get_xml_text(item, 'excluUseAr', '0'))
+                    floor = int(self._get_xml_text(item, 'floor', '0'))
+                    deal_amount = self._parse_amount(self._get_xml_text(item, 'dealAmount'))
+
+                    # 데이터 유효성 검사
+                    if build_year < 1900 or build_year > 2100:
+                        self.logger.warning(f"유효하지 않은 건축년도: {build_year}")
+                        build_year = 0
+                    if exclusive_area < 0 or exclusive_area > 1000:  # 1000㎡ 이상은 비정상적
+                        self.logger.warning(f"유효하지 않은 전용면적: {exclusive_area}")
+                        exclusive_area = 0
+                    if floor < 0 or floor > 200:  # 200층 이상은 비정상적
+                        self.logger.warning(f"유효하지 않은 층수: {floor}")
+                        floor = 0
+
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"숫자 필드 파싱 오류: {e}, 기본값 사용")
+                    build_year = 0
+                    exclusive_area = 0
+                    floor = 0
+                    deal_amount = 0
+
                 transaction = {
                     'apt_dong': self._get_xml_text(item, 'aptDong'),
                     'apt_name': self._get_xml_text(item, 'aptNm'),
                     'apt_seq': self._get_xml_text(item, 'aptSeq'),
                     'bonbun': self._get_xml_text(item, 'bonbun'),
                     'bubun': self._get_xml_text(item, 'bubun'),
-                    'build_year': int(self._get_xml_text(item, 'buildYear', '0')),
+                    'build_year': build_year,
                     'buyer_gbn': self._get_xml_text(item, 'buyerGbn'),
-                    'deal_amount': self._parse_amount(self._get_xml_text(item, 'dealAmount')),
+                    'deal_amount': deal_amount,
                     'deal_day': deal_day,
                     'deal_month': deal_month,
                     'deal_year': deal_year,
                     'dealing_gbn': self._get_xml_text(item, 'dealingGbn'),
                     'estate_agent_sgg_nm': self._get_xml_text(item, 'estateAgentSggNm'),
-                    'exclusive_area': float(self._get_xml_text(item, 'excluUseAr', '0')),
-                    'floor': int(self._get_xml_text(item, 'floor', '0')),
+                    'exclusive_area': exclusive_area,
+                    'floor': floor,
                     'jibun': self._get_xml_text(item, 'jibun'),
                     'road_name': self._get_xml_text(item, 'roadNm'),
                     'road_name_bonbun': self._get_xml_text(item, 'roadNmBonbun'),
@@ -492,6 +645,18 @@ class MolitRealEstateAPI:
                 }
             else:
                 self.logger.info(f"✅ {len(transactions)}건의 실거래 데이터 수집완료 (총 {total_count_value}건)")
+                if transactions:
+                    # 거래 데이터 요약 정보 표시
+                    apt_names = list(set([tx.get('apt_name', '') for tx in transactions if tx.get('apt_name')]))
+                    self.logger.info(f"📍 포함된 아파트 단지: {len(apt_names)}개 ({', '.join(apt_names[:3])}{'...' if len(apt_names) > 3 else ''})")
+
+                    # 가격 범위 정보
+                    prices = [tx.get('deal_amount', 0) for tx in transactions if tx.get('deal_amount')]
+                    if prices:
+                        min_price = min(prices) / 10000  # 만원 단위
+                        max_price = max(prices) / 10000
+                        avg_price = sum(prices) / len(prices) / 10000
+                        self.logger.info(f"💰 거래가격 범위: {min_price:,.0f}만원 ~ {max_price:,.0f}만원 (평균: {avg_price:,.0f}만원)")
 
                 return {
                     'success': True,
@@ -541,11 +706,19 @@ class MolitRealEstateAPI:
                 else:
                     current = current.replace(month=current.month + 1)
         else:
-            # 기존 방식: 개월 수로 조회
+            # 기존 방식: 개월 수로 조회 - 정확한 월별 계산
             current_date = datetime.now()
             for i in range(months):
-                # 현재월부터 과거로 거슬러 올라감
-                target_date = current_date - timedelta(days=30 * i)
+                # 현재월부터 과거로 정확히 월 단위로 거슬러 올라감
+                year = current_date.year
+                month = current_date.month - i
+
+                # 월이 0 이하가 되면 이전 연도로 이동
+                while month <= 0:
+                    month += 12
+                    year -= 1
+
+                target_date = datetime(year, month, 1)
                 deal_ymd = target_date.strftime("%Y%m")
 
                 result = self.get_apt_trade_data(lawd_cd, deal_ymd)
@@ -686,22 +859,58 @@ class MolitRealEstateAPI:
         return list(self.region_hierarchy.keys())
 
     def get_districts(self, city: str) -> List[Dict]:
-        """특정 시/도의 군/구 목록 반환"""
+        """특정 시/도의 군/구 목록 반환 (구 단위 세분화 포함)"""
         if city in self.region_hierarchy:
             districts = []
-            for district, code in self.region_hierarchy[city].items():
-                districts.append({
-                    'name': district,
-                    'code': code,
-                    'full_name': f"{city} {district}"
-                })
+            for district, code_or_dict in self.region_hierarchy[city].items():
+                if isinstance(code_or_dict, str):
+                    # 단순 시/군/구
+                    districts.append({
+                        'name': district,
+                        'code': code_or_dict,
+                        'full_name': f"{city} {district}"
+                    })
+                elif isinstance(code_or_dict, dict):
+                    # 구 단위로 세분화된 시
+                    for sub_district, sub_code in code_or_dict.items():
+                        if sub_district == '_main':
+                            # 메인 코드 (전체 시)
+                            districts.append({
+                                'name': district,
+                                'code': sub_code,
+                                'full_name': f"{city} {district}"
+                            })
+                        else:
+                            # 개별 구
+                            districts.append({
+                                'name': f"{district} {sub_district}",
+                                'code': sub_code,
+                                'full_name': f"{city} {district} {sub_district}"
+                            })
             return sorted(districts, key=lambda x: x['name'])
         return []
 
     def get_region_code_by_city_district(self, city: str, district: str) -> str:
-        """시/도와 군/구로 지역코드 조회"""
-        if city in self.region_hierarchy and district in self.region_hierarchy[city]:
-            return self.region_hierarchy[city][district]
+        """시/도와 군/구로 지역코드 조회 (구 단위 세분화 지원)"""
+        if city in self.region_hierarchy:
+            city_data = self.region_hierarchy[city]
+
+            # 정확한 매칭 시도
+            if district in city_data:
+                code_or_dict = city_data[district]
+                if isinstance(code_or_dict, str):
+                    return code_or_dict
+                elif isinstance(code_or_dict, dict) and '_main' in code_or_dict:
+                    return code_or_dict['_main']
+
+            # 구 단위로 세분화된 경우 검색
+            for city_name, code_or_dict in city_data.items():
+                if isinstance(code_or_dict, dict):
+                    for sub_district, sub_code in code_or_dict.items():
+                        if sub_district != '_main' and f"{city_name} {sub_district}" == district:
+                            return sub_code
+                        elif sub_district != '_main' and sub_district == district:
+                            return sub_code
         return ''
 
     def get_region_list(self) -> List[Dict]:
@@ -722,7 +931,7 @@ class MolitRealEstateAPI:
     def _get_raw_xml_response(self, lawd_cd: str, deal_ymd: str) -> str:
         """원본 XML 응답 반환 (테스트용)"""
         try:
-            url = "http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev"
+            # 일관성을 위해 base_url 사용
             params = {
                 'serviceKey': self.service_key,
                 'LAWD_CD': lawd_cd,
@@ -731,10 +940,14 @@ class MolitRealEstateAPI:
                 'pageNo': 1
             }
             
-            response = requests.get(url, params=params, timeout=30)
-            self.logger.info(f"원본 XML 요청: {url}")
-            self.logger.info(f"요청 파라미터: {params}")
-            self.logger.info(f"HTTP 상태코드: {response.status_code}")
+            response = self.session.get(self.base_url, params=params, timeout=30)
+            self.logger.info(f"📡 원본 XML 요청: {self.base_url}")
+            self.logger.info(f"📋 요청 파라미터:")
+            self.logger.info(f"   - 지역코드(LAWD_CD): {lawd_cd}")
+            self.logger.info(f"   - 거래년월(DEAL_YMD): {deal_ymd}")
+            self.logger.info(f"   - 조회건수(numOfRows): {params['numOfRows']}")
+            self.logger.info(f"   - 페이지번호(pageNo): {params['pageNo']}")
+            self.logger.info(f"🌐 HTTP 상태코드: {response.status_code}")
             
             return response.text
             
