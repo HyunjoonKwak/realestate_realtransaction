@@ -718,9 +718,9 @@ class ApartmentDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                
+
                 cursor.execute('''
-                    SELECT DISTINCT 
+                    SELECT DISTINCT
                         apt_name,
                         region_code,
                         region_name,
@@ -730,12 +730,12 @@ class ApartmentDatabase:
                         AVG(price_per_area) as avg_price,
                         MIN(price_per_area) as min_price,
                         MAX(price_per_area) as max_price
-                    FROM transaction_data 
+                    FROM transaction_data
                     WHERE region_code = ?
                     GROUP BY apt_name, region_code, umd_nm
                     ORDER BY transaction_count DESC, apt_name
                 ''', (region_code,))
-                
+
                 apartments = []
                 for row in cursor.fetchall():
                     apartments.append({
@@ -749,9 +749,56 @@ class ApartmentDatabase:
                         'min_price': row['min_price'] or 0,
                         'max_price': row['max_price'] or 0
                     })
-                
+
                 return apartments
-                
+
         except Exception as e:
             self.logger.error(f"지역별 아파트 목록 조회 실패: {e}")
             return []
+
+    def clear_database(self) -> bool:
+        """데이터베이스 초기화 (모든 데이터 삭제)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 모든 테이블의 데이터 삭제
+                tables = [
+                    'transaction_data',
+                    'search_cache',
+                    'price_alerts'
+                ]
+
+                for table in tables:
+                    cursor.execute(f'DELETE FROM {table}')
+                    self.logger.info(f"{table} 테이블 데이터 삭제 완료")
+
+                # 관심단지는 비활성화만 (완전 삭제 안함)
+                cursor.execute('UPDATE favorite_apartments SET is_active = 0')
+                self.logger.info("관심단지 데이터 비활성화 완료")
+
+                conn.commit()
+                self.logger.info("데이터베이스 초기화 완료")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"데이터베이스 초기화 실패: {e}")
+            return False
+
+    def clear_cache_only(self) -> bool:
+        """캐시 데이터만 삭제"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 캐시 테이블만 삭제
+                cursor.execute('DELETE FROM search_cache')
+                affected_rows = cursor.rowcount
+
+                conn.commit()
+                self.logger.info(f"캐시 데이터 삭제 완료: {affected_rows}건")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"캐시 삭제 실패: {e}")
+            return False

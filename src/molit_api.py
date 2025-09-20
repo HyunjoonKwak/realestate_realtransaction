@@ -799,7 +799,7 @@ class MolitRealEstateAPI:
             'pages_fetched': page_no
         }
 
-    def get_multiple_months_data(self, lawd_cd: str, months: int = 6, start_date: str = None, end_date: str = None) -> List[Dict]:
+    def get_multiple_months_data(self, lawd_cd: str, months: int = 6, start_date: str = None, end_date: str = None, progress_callback=None) -> List[Dict]:
         """여러 개월 실거래 데이터 조회"""
         all_transactions = []
         
@@ -813,13 +813,14 @@ class MolitRealEstateAPI:
                 deal_ymd = current.strftime("%Y%m")
                 result = self.get_combined_apt_data(lawd_cd, deal_ymd)
                 if result['success']:
-                    # 날짜 범위에 맞는 데이터만 필터링
+                    # 날짜 범위 + 매매 데이터 필터링
                     filtered_data = [
                         tx for tx in result['data']
-                        if start <= datetime.strptime(tx['deal_date'], "%Y-%m-%d") <= end
+                        if (start <= datetime.strptime(tx['deal_date'], "%Y-%m-%d") <= end and
+                            not tx.get('rentFee') and not tx.get('deposit') and not tx.get('monthlyRent'))
                     ]
                     all_transactions.extend(filtered_data)
-                    self.logger.info(f"{deal_ymd} 통합 데이터 {len(filtered_data)}건 수집 (날짜 범위 필터링)")
+                    self.logger.info(f"{deal_ymd} 통합 데이터 {len(result['data'])}건 수집 → 매매 데이터 {len(filtered_data)}건 필터링 (날짜 범위)")
                 else:
                     self.logger.warning(f"{deal_ymd} 통합 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
                 
@@ -844,16 +845,33 @@ class MolitRealEstateAPI:
                 target_date = datetime(year, month, 1)
                 deal_ymd = target_date.strftime("%Y%m")
 
+                # 진행률 콜백 호출 (시작)
+                if progress_callback:
+                    progress_callback(i, months, f"{year}년 {month}월", len(all_transactions), f"{year}년 {month}월 데이터 조회 중...")
+
                 result = self.get_combined_apt_data(lawd_cd, deal_ymd)
                 if result['success']:
-                    all_transactions.extend(result['data'])
-                    self.logger.info(f"{deal_ymd} 통합 데이터 {len(result['data'])}건 수집")
+                    # 매매 데이터만 필터링 (거래유형이 없거나 전월세 관련 필드가 없는 데이터)
+                    sale_data = [
+                        tx for tx in result['data']
+                        if not tx.get('rentFee') and not tx.get('deposit') and not tx.get('monthlyRent')
+                    ]
+                    all_transactions.extend(sale_data)
+                    self.logger.info(f"{deal_ymd} 통합 데이터 {len(result['data'])}건 수집 → 매매 데이터 {len(sale_data)}건 필터링")
+
+                    # 진행률 콜백 호출 (완료)
+                    if progress_callback:
+                        progress_callback(i + 1, months, f"{year}년 {month}월", len(all_transactions), f"{year}년 {month}월 데이터 수집 완료")
                 else:
                     self.logger.warning(f"{deal_ymd} 통합 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
 
+                    # 진행률 콜백 호출 (실패)
+                    if progress_callback:
+                        progress_callback(i + 1, months, f"{year}년 {month}월", len(all_transactions), f"{year}년 {month}월 데이터 수집 실패")
+
         return all_transactions
 
-    def get_multiple_months_rent_data(self, lawd_cd: str, months: int = 6, start_date: str = None, end_date: str = None) -> List[Dict]:
+    def get_multiple_months_rent_data(self, lawd_cd: str, months: int = 6, start_date: str = None, end_date: str = None, progress_callback=None) -> List[Dict]:
         """여러 개월 전월세 데이터 조회"""
         all_transactions = []
 
@@ -898,12 +916,24 @@ class MolitRealEstateAPI:
                 target_date = datetime(year, month, 1)
                 deal_ymd = target_date.strftime("%Y%m")
 
+                # 진행률 콜백 호출 (시작)
+                if progress_callback:
+                    progress_callback(i, months, f"{year}년 {month}월", len(all_transactions), f"{year}년 {month}월 전월세 데이터 조회 중...")
+
                 result = self.get_apt_rent_data(lawd_cd, deal_ymd)
                 if result['success']:
                     all_transactions.extend(result['data'])
                     self.logger.info(f"{deal_ymd} 전월세 데이터 {len(result['data'])}건 수집")
+
+                    # 진행률 콜백 호출 (완료)
+                    if progress_callback:
+                        progress_callback(i + 1, months, f"{year}년 {month}월", len(all_transactions), f"{year}년 {month}월 전월세 데이터 수집 완료")
                 else:
                     self.logger.warning(f"{deal_ymd} 전월세 데이터 수집 실패: {result.get('error', '알 수 없는 오류')}")
+
+                    # 진행률 콜백 호출 (실패)
+                    if progress_callback:
+                        progress_callback(i + 1, months, f"{year}년 {month}월", len(all_transactions), f"{year}년 {month}월 전월세 데이터 수집 실패")
 
         return all_transactions
 
@@ -1053,7 +1083,10 @@ class MolitRealEstateAPI:
             with open('dong_code_active.txt', 'r', encoding='utf-8') as f:
                 lines = f.readlines()[1:]  # 헤더 제외
 
-            seen_districts = set()
+            # 첫 번째 패스: 모든 군/구 정보 수집 및 하위 구를 가진 시 식별
+            all_districts = []
+            parent_cities_with_sub_districts = set()
+
             for line in lines:
                 parts = line.strip().split('\t')
                 if len(parts) >= 3 and parts[2] == '존재':
@@ -1066,18 +1099,39 @@ class MolitRealEstateAPI:
                         if code.endswith('00000') and not code.endswith('0000000000'):
                             # 중복 제거를 위해 군/구명 추출
                             district_name = name.replace(f'{city} ', '').strip()
-                            if district_name and district_name != city and district_name not in seen_districts:
-                                districts.append({
+                            if district_name and district_name != city:
+                                all_districts.append({
                                     'name': district_name,
                                     'code': code,
                                     'full_name': name
                                 })
-                                seen_districts.add(district_name)
 
+                                # 하위 구가 있는 상위 시 식별 (예: "고양시 덕양구"에서 "고양시" 추출)
+                                if ' ' in district_name:
+                                    parent_city = district_name.split(' ')[0]
+                                    parent_cities_with_sub_districts.add(parent_city)
+
+            # 두 번째 패스: 하위 구가 있는 상위 시는 제외하고 최종 목록 생성
+            seen_districts = set()
+            for district in all_districts:
+                district_name = district['name']
+
+                # 하위 구가 있는 상위 시는 제외
+                if district_name in parent_cities_with_sub_districts:
+                    self.logger.info(f"🚫 하위 구가 있는 상위 시 제외: {district_name}")
+                    continue
+
+                # 중복 제거
+                if district_name not in seen_districts:
+                    districts.append(district)
+                    seen_districts.add(district_name)
+                    self.logger.debug(f"✅ 군/구 추가: {district_name} (코드: {district['code']})")
+
+            self.logger.info(f"📍 {city} 최종 군/구 목록: {len(districts)}개 (제외된 상위 시: {parent_cities_with_sub_districts})")
             return sorted(districts, key=lambda x: x['name'])
 
         except FileNotFoundError:
-            # 파일이 없으면 기존 방식 사용
+            # 파일이 없으면 기존 방식 사용 (하위 구가 있는 상위 시 제외)
             if city in self.region_hierarchy:
                 districts = []
                 for district, code_or_dict in self.region_hierarchy[city].items():
@@ -1089,22 +1143,18 @@ class MolitRealEstateAPI:
                             'full_name': f"{city} {district}"
                         })
                     elif isinstance(code_or_dict, dict):
-                        # 구 단위로 세분화된 시
+                        # 구 단위로 세분화된 시 - 상위 시(_main)는 제외하고 개별 구만 추가
                         for sub_district, sub_code in code_or_dict.items():
-                            if sub_district == '_main':
-                                # 메인 코드 (전체 시)
-                                districts.append({
-                                    'name': district,
-                                    'code': sub_code,
-                                    'full_name': f"{city} {district}"
-                                })
-                            else:
-                                # 개별 구
+                            if sub_district != '_main':  # 상위 시는 제외
+                                # 개별 구만 추가
                                 districts.append({
                                     'name': f"{district} {sub_district}",
                                     'code': sub_code,
                                     'full_name': f"{city} {district} {sub_district}"
                                 })
+                                self.logger.debug(f"✅ 하위 구 추가: {district} {sub_district} (코드: {sub_code})")
+
+                        self.logger.info(f"🚫 하위 구가 있는 상위 시 제외: {district}")
             return sorted(districts, key=lambda x: x['name'])
         return []
 

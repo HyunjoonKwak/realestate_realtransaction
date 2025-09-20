@@ -3,11 +3,14 @@
 국토교통부 실거래가 조회 시스템 웹 애플리케이션
 """
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
 import os
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import logging
+import json
+import threading
+import time
 
 from .molit_api import MolitRealEstateAPI
 from .database import ApartmentDatabase
@@ -20,7 +23,11 @@ class ApartmentTrackerApp:
 
     def __init__(self):
         self.app = Flask(__name__, template_folder='../templates', static_folder='../static')
-        
+
+        # 진행률 저장소
+        self.search_progress = {}
+        self.search_lock = threading.Lock()
+
         # 보안 설정
         self.app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
         
@@ -60,6 +67,31 @@ class ApartmentTrackerApp:
 
         self.setup_routes()
 
+    def create_progress_callback(self, search_id):
+        """진행률 콜백 함수 생성"""
+        def callback(completed, total, current_month, total_data, message):
+            with self.search_lock:
+                self.search_progress[search_id] = {
+                    'completed': completed,
+                    'total': total,
+                    'current_month': current_month,
+                    'total_data': total_data,
+                    'message': message,
+                    'percentage': round((completed / total) * 100) if total > 0 else 0,
+                    'timestamp': datetime.now().isoformat()
+                }
+        return callback
+
+    def get_search_progress(self, search_id):
+        """검색 진행률 조회"""
+        with self.search_lock:
+            return self.search_progress.get(search_id, None)
+
+    def clear_search_progress(self, search_id):
+        """검색 진행률 삭제"""
+        with self.search_lock:
+            if search_id in self.search_progress:
+                del self.search_progress[search_id]
 
     def setup_routes(self):
         """라우트 설정"""
@@ -467,7 +499,10 @@ class ApartmentTrackerApp:
                 
                 # 데이터베이스에서 먼저 확인 (36개월 캐시) - 검색 타입별로 별도 캐시 키 사용
                 search_date = datetime.now().strftime('%Y-%m-%d')
-                search_type_name = "매매" if search_type == "sale" else "전월세"
+                if search_type == "all":
+                    search_type_name = "통합"
+                else:
+                    search_type_name = "매매" if search_type == "sale" else "전월세"
                 cache_key = f"{region_code}_{search_type}"  # 검색 타입별 캐시 키
                 cached_data = self.db.get_search_cache(cache_key, 36, search_date)
                 if cached_data and cached_data.get('raw_data'):
@@ -504,8 +539,13 @@ class ApartmentTrackerApp:
                     # 검색 타입에 따라 다른 API 호출
                     if search_type == "sale":
                         api_data = self.molit_api.get_multiple_months_data(region_code, months=36)
-                    else:  # rent
+                    elif search_type == "rent":
                         api_data = self.molit_api.get_multiple_months_rent_data(region_code, months=36)
+                    else:  # all - 통합 검색
+                        # 매매와 전월세 데이터를 모두 가져와서 합치기
+                        sale_data = self.molit_api.get_multiple_months_data(region_code, months=36)
+                        rent_data = self.molit_api.get_multiple_months_rent_data(region_code, months=36)
+                        api_data = (sale_data or []) + (rent_data or [])
 
                     self.logger.info(f"{search_type_name} API 호출 결과: {len(api_data) if api_data else 0}건의 데이터")
                 except Exception as e:
@@ -848,6 +888,273 @@ class ApartmentTrackerApp:
             """API 테스트 페이지"""
             return render_template('api_test.html')
 
+        @self.app.route('/api/search/progress/<search_id>')
+        def api_search_progress(search_id):
+            """검색 진행률 조회 API"""
+            try:
+                progress = self.get_search_progress(search_id)
+                self.logger.info(f"🔍 진행률 조회 - Search ID: {search_id}, Progress: {progress}")
+
+                if progress:
+                    return jsonify({
+                        'success': True,
+                        'progress': progress
+                    })
+                else:
+                    self.logger.warning(f"⚠️ 진행률 정보 없음 - Search ID: {search_id}")
+                    return jsonify({
+                        'success': False,
+                        'message': '진행률 정보를 찾을 수 없습니다.'
+                    })
+            except Exception as e:
+                self.logger.error(f"진행률 조회 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/search/progress-stream/<search_id>')
+        def api_search_progress_stream(search_id):
+            """검색 진행률 실시간 스트림 (Server-Sent Events)"""
+            def generate():
+                while True:
+                    progress = self.get_search_progress(search_id)
+                    if progress:
+                        yield f"data: {json.dumps(progress)}\n\n"
+
+                        # 100% 완료시 스트림 종료
+                        if progress.get('percentage', 0) >= 100:
+                            break
+                    time.sleep(0.5)  # 0.5초마다 업데이트
+
+            return Response(generate(), mimetype='text/plain')
+
+        @self.app.route('/api/search/with-progress', methods=['POST'])
+        def api_search_with_progress():
+            """진행률이 포함된 검색 API"""
+            try:
+                self.logger.info("🚀 진행률 검색 API 호출됨")
+
+                if not self.molit_api or not self.db:
+                    self.logger.error("❌ API 또는 데이터베이스 연결 실패")
+                    return jsonify({'success': False, 'message': 'API 또는 데이터베이스 연결 실패'})
+
+                data = request.get_json()
+                city = data.get('city')
+                district = data.get('district')
+                dong = data.get('dong')
+                search_type = data.get('search_type', 'sale')
+                months = int(data.get('months', 36))
+
+                self.logger.info(f"📍 검색 파라미터: {city} {district} {dong} ({search_type}, {months}개월)")
+
+                if not city or not district or not dong:
+                    self.logger.warning("⚠️ 필수 파라미터 누락")
+                    return jsonify({'success': False, 'message': '시도, 군구, 법정동을 모두 선택해주세요.'})
+
+                # 검색 ID 생성
+                search_id = f"{city}_{district}_{dong}_{search_type}_{int(time.time())}"
+                self.logger.info(f"🆔 생성된 검색 ID: {search_id}")
+
+                # 지역 코드 조회
+                region_code = self.molit_api.get_region_code_by_city_district(city, district)
+                self.logger.info(f"🗺️ 지역 코드: {region_code}")
+                if not region_code:
+                    self.logger.error(f"❌ 지역 코드 조회 실패: {city} {district}")
+                    return jsonify({'success': False, 'message': '해당 지역의 코드를 찾을 수 없습니다.'})
+
+                # 진행률 콜백 생성
+                progress_callback = self.create_progress_callback(search_id)
+                self.logger.info(f"✅ 진행률 콜백 생성 완료")
+
+                # 백그라운드에서 검색 실행
+                def background_search():
+                    try:
+                        self.logger.info(f"🚀 백그라운드 검색 시작 - Search ID: {search_id}, Type: {search_type}, Region: {region_code}")
+
+                        # 캐시에서 기존 데이터 확인
+                        search_date = datetime.now().strftime('%Y-%m-%d')
+                        cached_data = self.db.get_search_cache(region_code, months, search_date)
+
+                        if cached_data and cached_data.get('raw_data'):
+                            self.logger.info(f"🎯 캐시에서 데이터 발견! 총 {len(cached_data['raw_data'])}건")
+                            # 검색 타입에 따라 필터링
+                            if search_type == "sale":
+                                # 매매 데이터만 필터링 (전월세 제외)
+                                api_data = [
+                                    tx for tx in cached_data['raw_data']
+                                    if not tx.get('rentFee') and not tx.get('deposit') and not tx.get('monthlyRent')
+                                ]
+                                self.logger.info(f"🏢 캐시에서 매매 데이터 {len(api_data)}건 추출")
+                            elif search_type == "rent":
+                                # 전월세 데이터만 필터링 (매매 제외)
+                                api_data = [
+                                    tx for tx in cached_data['raw_data']
+                                    if tx.get('rentFee') or tx.get('deposit') or tx.get('monthlyRent')
+                                ]
+                                self.logger.info(f"🏠 캐시에서 전월세 데이터 {len(api_data)}건 추출")
+                            else:  # all - 통합 검색
+                                # 모든 데이터 사용 (필터링 없음)
+                                api_data = cached_data['raw_data']
+                                self.logger.info(f"🌟 캐시에서 통합 데이터 {len(api_data)}건 추출")
+
+                            # 즉시 완료 상태로 진행률 업데이트
+                            progress_callback(months, months, "완료", len(api_data), "캐시에서 데이터를 가져왔습니다")
+                        else:
+                            # 캐시가 없으면 API 호출
+                            self.logger.info(f"📡 캐시 없음 - API 호출 시작")
+                            if search_type == "sale":
+                                self.logger.info(f"📊 매매 데이터 조회 시작 - {months}개월")
+                                api_data = self.molit_api.get_multiple_months_data(region_code, months=months, progress_callback=progress_callback)
+                            elif search_type == "rent":
+                                self.logger.info(f"🏠 전월세 데이터 조회 시작 - {months}개월")
+                                api_data = self.molit_api.get_multiple_months_rent_data(region_code, months=months, progress_callback=progress_callback)
+                            else:  # all - 통합 검색
+                                self.logger.info(f"🌟 통합 데이터 조회 시작 - {months}개월")
+                                # 매매와 전월세 데이터를 모두 가져와서 합치기
+                                sale_data = self.molit_api.get_multiple_months_data(region_code, months=months, progress_callback=progress_callback)
+                                rent_data = self.molit_api.get_multiple_months_rent_data(region_code, months=months, progress_callback=progress_callback)
+                                api_data = (sale_data or []) + (rent_data or [])
+
+                        # 선택된 동으로 필터링
+                        self.logger.info(f"🔍 동 필터링 시작: 검색하는 동='{dong}', API 데이터 총 {len(api_data)}건")
+
+                        # 실제 데이터에 포함된 동 이름들 확인
+                        actual_dongs = set([tx.get('umd_nm', '') for tx in api_data[:10]])  # 처음 10개만 확인
+                        self.logger.info(f"📍 실제 데이터의 동 이름들 (샘플): {actual_dongs}")
+
+                        filtered_data = [tx for tx in api_data if tx.get('umd_nm') == dong]
+                        self.logger.info(f"🎯 동 필터링 결과: {len(filtered_data)}건 ('{dong}' 동 매칭)")
+
+                        # 아파트 목록 추출
+                        apartment_list = self._extract_apartment_list_improved(filtered_data)
+
+                        # 캐시에 원본 데이터 저장 (동 필터링 전 전체 데이터)
+                        if not cached_data:  # 캐시에서 가져오지 않았을 때만 저장
+                            try:
+                                # 지역 이름 생성
+                                region_name = f"{city} {district}"
+                                search_date = datetime.now().strftime('%Y-%m-%d')
+
+                                # 캐시에 저장 (전체 API 데이터를 저장하여 다른 동 검색에서 재사용)
+                                cache_saved = self.db.save_search_cache(
+                                    region_code=region_code,
+                                    region_name=region_name,
+                                    months=months,
+                                    search_date=search_date,
+                                    total_count=len(api_data),
+                                    classified_data={},  # 백그라운드 검색에서는 분류 데이터 없음
+                                    raw_data=api_data,
+                                    cache_hours=24
+                                )
+                                if cache_saved:
+                                    self.logger.info(f"🎯 캐시 저장 완료: {region_name} ({len(api_data)}건)")
+                                else:
+                                    self.logger.warning(f"⚠️ 캐시 저장 실패: {region_name}")
+                            except Exception as cache_error:
+                                self.logger.error(f"캐시 저장 중 오류: {cache_error}")
+
+                        # 최종 진행률 업데이트
+                        progress_callback(months, months, "완료", len(filtered_data), "검색이 완료되었습니다")
+
+                        # 결과 저장 (나중에 결과 조회용)
+                        with self.search_lock:
+                            self.search_progress[search_id + '_result'] = {
+                                'apartment_list': apartment_list,
+                                'total_count': len(filtered_data),
+                                'region_code': region_code,
+                                'dong_name': dong,
+                                'search_type': search_type,
+                                'completed': True
+                            }
+
+                    except Exception as e:
+                        self.logger.error(f"백그라운드 검색 오류: {e}")
+                        progress_callback(0, months, "오류", 0, f"검색 중 오류가 발생했습니다: {str(e)}")
+
+                # 백그라운드 스레드로 실행
+                self.logger.info(f"🧵 백그라운드 스레드 생성 시작")
+                thread = threading.Thread(target=background_search)
+                thread.daemon = True
+                thread.start()
+                self.logger.info(f"🧵 백그라운드 스레드 시작됨")
+
+                return jsonify({
+                    'success': True,
+                    'search_id': search_id,
+                    'message': '검색이 시작되었습니다. 진행률을 확인하세요.'
+                })
+
+            except Exception as e:
+                self.logger.error(f"진행률 검색 API 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/search/result/<search_id>')
+        def api_search_result(search_id):
+            """검색 결과 조회 API"""
+            try:
+                with self.search_lock:
+                    result = self.search_progress.get(search_id + '_result')
+
+                if result:
+                    return jsonify({
+                        'success': True,
+                        'result': result
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'message': '검색 결과를 찾을 수 없습니다.'
+                    })
+
+            except Exception as e:
+                self.logger.error(f"검색 결과 조회 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/test/progress', methods=['POST'])
+        def api_test_progress():
+            """진행률 테스트 API"""
+            try:
+                # 테스트용 진행률 데이터 생성
+                test_search_id = "test_search_" + str(int(time.time()))
+
+                # 진행률 콜백 생성 및 테스트
+                progress_callback = self.create_progress_callback(test_search_id)
+
+                # 테스트 진행률 업데이트
+                for i in range(5):
+                    progress_callback(i, 5, f"테스트 {i+1}", i*10, f"테스트 진행률 {i+1}/5")
+
+                return jsonify({
+                    'success': True,
+                    'test_search_id': test_search_id,
+                    'message': '테스트 진행률 데이터가 생성되었습니다.'
+                })
+
+            except Exception as e:
+                self.logger.error(f"진행률 테스트 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
+        @self.app.route('/api/database/clear', methods=['POST'])
+        def clear_database():
+            """데이터베이스 초기화 API"""
+            try:
+                data = request.get_json()
+                clear_type = data.get('type', 'cache')  # 'cache' 또는 'all'
+
+                if clear_type == 'all':
+                    success = self.database.clear_database()
+                    message = "데이터베이스가 완전히 초기화되었습니다." if success else "데이터베이스 초기화에 실패했습니다."
+                else:
+                    success = self.database.clear_cache_only()
+                    message = "캐시 데이터가 삭제되었습니다." if success else "캐시 삭제에 실패했습니다."
+
+                return jsonify({
+                    'success': success,
+                    'message': message
+                })
+
+            except Exception as e:
+                self.logger.error(f"데이터베이스 초기화 오류: {e}")
+                return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
+
         @self.app.route('/test-simple')
         def test_simple():
             """간단한 테스트 페이지"""
@@ -944,18 +1251,26 @@ class ApartmentTrackerApp:
                     'region_name': transaction.get('region_name', ''),
                     'build_year': transaction.get('build_year', 0),
                     'transaction_count': 0,
+                    'sale_count': 0,      # 매매 거래 건수
+                    'rent_count': 0,      # 전월세 거래 건수
                     'avg_price': 0,
                     'min_price': float('inf'),
                     'max_price': 0,
                     'dong_list': set(),
-                    'is_rent': transaction.get('transaction_type') is not None  # 전월세 여부 판단
                 }
 
             # 거래 건수 증가
             apartment_dict[apt_name]['transaction_count'] += 1
 
+            # 매매/전월세 구분하여 카운팅
+            is_rent = transaction.get('transaction_type') is not None or transaction.get('rentFee') or transaction.get('deposit') or transaction.get('monthlyRent')
+            if is_rent:
+                apartment_dict[apt_name]['rent_count'] += 1
+            else:
+                apartment_dict[apt_name]['sale_count'] += 1
+
             # 가격 통계 계산
-            if transaction.get('transaction_type'):  # 전월세 데이터인 경우
+            if is_rent:  # 전월세 데이터인 경우
                 # 전월세는 보증금(deal_amount) 기준으로 계산
                 price = transaction.get('deal_amount', 0)  # 보증금
             else:  # 매매 데이터인 경우
