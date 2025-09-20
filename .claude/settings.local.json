@@ -9,7 +9,9 @@
       "Bash(kill:*)",
       "Bash(git restore:*)",
       "Bash(awk:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(./stop.sh)",
+      "Bash(./start.sh:*)"
     ],
     "deny": [],
     "ask": []

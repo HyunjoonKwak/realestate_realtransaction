@@ -1089,22 +1089,22 @@ class MolitRealEstateAPI:
                             'full_name': f"{city} {district}"
                         })
                     elif isinstance(code_or_dict, dict):
-                    # 구 단위로 세분화된 시
-                    for sub_district, sub_code in code_or_dict.items():
-                        if sub_district == '_main':
-                            # 메인 코드 (전체 시)
-                            districts.append({
-                                'name': district,
-                                'code': sub_code,
-                                'full_name': f"{city} {district}"
-                            })
-                        else:
-                            # 개별 구
-                            districts.append({
-                                'name': f"{district} {sub_district}",
-                                'code': sub_code,
-                                'full_name': f"{city} {district} {sub_district}"
-                            })
+                        # 구 단위로 세분화된 시
+                        for sub_district, sub_code in code_or_dict.items():
+                            if sub_district == '_main':
+                                # 메인 코드 (전체 시)
+                                districts.append({
+                                    'name': district,
+                                    'code': sub_code,
+                                    'full_name': f"{city} {district}"
+                                })
+                            else:
+                                # 개별 구
+                                districts.append({
+                                    'name': f"{district} {sub_district}",
+                                    'code': sub_code,
+                                    'full_name': f"{city} {district} {sub_district}"
+                                })
             return sorted(districts, key=lambda x: x['name'])
         return []
 
@@ -1127,17 +1127,22 @@ class MolitRealEstateAPI:
 
                     # 해당 시/도, 군/구에 속하는지 확인
                     if name.startswith(target_prefix):
-                        # 법정동 레벨인지 확인 (끝 2자리가 00이지만 끝 5자리가 00000이 아님)
-                        if code.endswith('00') and not code.endswith('00000'):
-                            # 법정동명 추출
-                            dong_name = name.replace(target_prefix, '').strip()
-                            if dong_name and dong_name not in seen_dongs:
-                                dongs.append({
-                                    'name': dong_name,
-                                    'code': code[:5],  # 앞 5자리만 사용 (LAWD_CD)
-                                    'full_name': name
-                                })
-                                seen_dongs.add(dong_name)
+                        # 읍/면/동 레벨만 가져오기 (리 단위 제외)
+                        # 시/군/구는 끝 5자리가 00000이므로 제외
+                        name_parts = name.split()
+                        if not code.endswith('00000'):
+                            # target_prefix 다음에 오는 첫 번째 단어가 읍/면/동
+                            target_parts = target_prefix.split()
+                            if len(name_parts) > len(target_parts):
+                                dong_name = name_parts[len(target_parts)]  # target_prefix 다음 단어
+                                # 리 단위가 아닌 읍/면/동만 (리로 끝나지 않는 것)
+                                if dong_name and not dong_name.endswith('리') and dong_name not in seen_dongs:
+                                    dongs.append({
+                                        'name': dong_name,
+                                        'code': code[:5],  # 앞 5자리만 사용 (LAWD_CD)
+                                        'full_name': name
+                                    })
+                                    seen_dongs.add(dong_name)
 
             return sorted(dongs, key=lambda x: x['name'])
 

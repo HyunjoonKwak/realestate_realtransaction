@@ -210,8 +210,8 @@ function loadDongs() {
             if (data.success && data.dongs) {
                 data.dongs.forEach(dong => {
                     const option = document.createElement('option');
-                    option.value = dong;
-                    option.textContent = dong;
+                    option.value = dong.name;
+                    option.textContent = dong.name;
                     dongSelect.appendChild(option);
                 });
 
