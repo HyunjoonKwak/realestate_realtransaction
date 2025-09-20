@@ -8,7 +8,8 @@
       "Bash(pkill:*)",
       "Bash(kill:*)",
       "Bash(git restore:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
