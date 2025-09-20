@@ -165,7 +165,22 @@ class ApartmentTrackerApp:
 
         @self.app.route('/api/dongs/<city>/<district>')
         def api_dongs(city, district):
-            """특정 시/도, 군/구의 법정동 목록 API"""
+            """특정 시/도, 군/구의 법정동 목록 API (dong_code_active.txt에서 파싱)"""
+            try:
+                if not self.molit_api:
+                    return jsonify({'success': False, 'message': 'API 연결 실패'})
+
+                # dong_code_active.txt에서 법정동 목록 가져오기
+                dongs = self.molit_api.get_dongs_from_file(city, district)
+                return jsonify({'success': True, 'dongs': dongs})
+
+            except Exception as e:
+                logging.error(f"법정동 목록 조회 오류: {e}")
+                return jsonify({'success': False, 'message': f'법정동 목록 조회 실패: {str(e)}'})
+
+        @self.app.route('/api/dongs_legacy/<city>/<district>')
+        def api_dongs_legacy(city, district):
+            """특정 시/도, 군/구의 법정동 목록 API (기존 API 호출 방식)"""
             try:
                 if not self.molit_api:
                     return jsonify({'success': False, 'message': 'API 연결 실패'})

@@ -199,8 +199,9 @@ function loadDongs() {
 
     if (!city || !district) return;
 
-    console.log('법정동 목록 로드 시작:', city, district);
+    console.log('법정동 목록 로드 시작 (dong_code에서 파싱):', city, district);
 
+    // dong_code_active.txt에서 법정동 목록 가져오기 (API 호출 없음)
     fetch(`/api/dongs/${encodeURIComponent(city)}/${encodeURIComponent(district)}`)
         .then(response => response.json())
         .then(data => {

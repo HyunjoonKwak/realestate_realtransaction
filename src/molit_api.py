@@ -1045,18 +1045,50 @@ class MolitRealEstateAPI:
         return list(self.region_hierarchy.keys())
 
     def get_districts(self, city: str) -> List[Dict]:
-        """특정 시/도의 군/구 목록 반환 (구 단위 세분화 포함)"""
-        if city in self.region_hierarchy:
-            districts = []
-            for district, code_or_dict in self.region_hierarchy[city].items():
-                if isinstance(code_or_dict, str):
-                    # 단순 시/군/구
-                    districts.append({
-                        'name': district,
-                        'code': code_or_dict,
-                        'full_name': f"{city} {district}"
-                    })
-                elif isinstance(code_or_dict, dict):
+        """특정 시/도의 군/구 목록 반환 (dong_code_active.txt에서 파싱)"""
+        districts = []
+
+        # dong_code_active.txt에서 해당 시/도의 군/구 목록을 찾기
+        try:
+            with open('dong_code_active.txt', 'r', encoding='utf-8') as f:
+                lines = f.readlines()[1:]  # 헤더 제외
+
+            seen_districts = set()
+            for line in lines:
+                parts = line.strip().split('\t')
+                if len(parts) >= 3 and parts[2] == '존재':
+                    code = parts[0]
+                    name = parts[1]
+
+                    # 시/도 매칭 확인
+                    if city in name:
+                        # 군/구 레벨 코드인지 확인 (끝 5자리가 00000)
+                        if code.endswith('00000') and not code.endswith('0000000000'):
+                            # 중복 제거를 위해 군/구명 추출
+                            district_name = name.replace(f'{city} ', '').strip()
+                            if district_name and district_name != city and district_name not in seen_districts:
+                                districts.append({
+                                    'name': district_name,
+                                    'code': code,
+                                    'full_name': name
+                                })
+                                seen_districts.add(district_name)
+
+            return sorted(districts, key=lambda x: x['name'])
+
+        except FileNotFoundError:
+            # 파일이 없으면 기존 방식 사용
+            if city in self.region_hierarchy:
+                districts = []
+                for district, code_or_dict in self.region_hierarchy[city].items():
+                    if isinstance(code_or_dict, str):
+                        # 단순 시/군/구
+                        districts.append({
+                            'name': district,
+                            'code': code_or_dict,
+                            'full_name': f"{city} {district}"
+                        })
+                    elif isinstance(code_or_dict, dict):
                     # 구 단위로 세분화된 시
                     for sub_district, sub_code in code_or_dict.items():
                         if sub_district == '_main':
@@ -1075,6 +1107,43 @@ class MolitRealEstateAPI:
                             })
             return sorted(districts, key=lambda x: x['name'])
         return []
+
+    def get_dongs_from_file(self, city: str, district: str) -> List[Dict]:
+        """dong_code_active.txt에서 특정 시/도, 군/구의 법정동 목록 반환"""
+        dongs = []
+
+        try:
+            with open('dong_code_active.txt', 'r', encoding='utf-8') as f:
+                lines = f.readlines()[1:]  # 헤더 제외
+
+            target_prefix = f"{city} {district}"
+            seen_dongs = set()
+
+            for line in lines:
+                parts = line.strip().split('\t')
+                if len(parts) >= 3 and parts[2] == '존재':
+                    code = parts[0]
+                    name = parts[1]
+
+                    # 해당 시/도, 군/구에 속하는지 확인
+                    if name.startswith(target_prefix):
+                        # 법정동 레벨인지 확인 (끝 2자리가 00이지만 끝 5자리가 00000이 아님)
+                        if code.endswith('00') and not code.endswith('00000'):
+                            # 법정동명 추출
+                            dong_name = name.replace(target_prefix, '').strip()
+                            if dong_name and dong_name not in seen_dongs:
+                                dongs.append({
+                                    'name': dong_name,
+                                    'code': code[:5],  # 앞 5자리만 사용 (LAWD_CD)
+                                    'full_name': name
+                                })
+                                seen_dongs.add(dong_name)
+
+            return sorted(dongs, key=lambda x: x['name'])
+
+        except FileNotFoundError:
+            logging.error("dong_code_active.txt 파일을 찾을 수 없습니다")
+            return []
 
     def get_region_code_by_city_district(self, city: str, district: str) -> str:
         """시/도와 군/구로 지역코드 조회 (구 단위 세분화 지원)"""
