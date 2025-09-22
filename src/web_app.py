@@ -14,6 +14,8 @@ import time
 
 from .molit_api import MolitRealEstateAPI
 from .database import ApartmentDatabase
+from .api_estimation import APICallEstimator
+from .api_tracker import APICallTracker
 
 # .env 파일 로드
 load_dotenv()
@@ -45,12 +47,18 @@ class ApartmentTrackerApp:
         )
         self.logger = logging.getLogger(__name__)
 
+        # API 호출 예측기 초기화
+        self.api_estimator = APICallEstimator()
+
+        # API 호출 추적기 초기화
+        self.api_tracker = APICallTracker()
+
         # MOLIT API 초기화
         try:
             molit_api_key = os.getenv('MOLIT_API_KEY')
             if not molit_api_key:
                 raise ValueError("MOLIT_API_KEY가 설정되지 않았습니다.")
-            self.molit_api = MolitRealEstateAPI(service_key=molit_api_key)
+            self.molit_api = MolitRealEstateAPI(service_key=molit_api_key, api_tracker=self.api_tracker)
             self.logger.info("MOLIT API 초기화 완료")
         except Exception as e:
             self.logger.error(f"MOLIT API 초기화 실패: {e}")
@@ -66,6 +74,20 @@ class ApartmentTrackerApp:
             self.db = None
 
         self.setup_routes()
+
+    def _calculate_cache_age_hours(self, cache_created_at):
+        """캐시 생성 시간으로부터 경과 시간(시간) 계산"""
+        try:
+            from datetime import datetime
+            if isinstance(cache_created_at, str):
+                cache_time = datetime.fromisoformat(cache_created_at.replace('Z', '+00:00'))
+            else:
+                cache_time = cache_created_at
+            now = datetime.now(cache_time.tzinfo) if cache_time.tzinfo else datetime.now()
+            age_delta = now - cache_time
+            return round(age_delta.total_seconds() / 3600, 1)  # 시간 단위로 반환
+        except Exception:
+            return 0
 
     def create_progress_callback(self, search_id):
         """진행률 콜백 함수 생성"""
@@ -132,14 +154,14 @@ class ApartmentTrackerApp:
 
         @self.app.route('/search')
         def search_page():
-            """아파트 검색 페이지"""
+            """아파트 검색 페이지 (3단계 계층적 검색)"""
             if not self.molit_api:
-                return render_template('error.html', 
-                                     error="API 연결 실패", 
+                return render_template('error.html',
+                                     error="API 연결 실패",
                                      message="국토교통부 API 키가 설정되지 않았습니다.")
-            
-            cities = self.molit_api.get_cities()
-            return render_template('search.html', cities=cities)
+
+            # 시/도 목록은 JavaScript에서 동적으로 로드
+            return render_template('search_new.html')
 
         @self.app.route('/favorites')
         def favorites_page():
@@ -210,6 +232,21 @@ class ApartmentTrackerApp:
                 logging.error(f"법정동 목록 조회 오류: {e}")
                 return jsonify({'success': False, 'message': f'법정동 목록 조회 실패: {str(e)}'})
 
+        @self.app.route('/api/towns/<city>/<district>')
+        def api_towns(city, district):
+            """특정 시/도, 군/구의 읍/면/동 목록 API (3단계 계층)"""
+            try:
+                if not self.molit_api:
+                    return jsonify({'success': False, 'message': 'API 연결 실패'})
+
+                # 읍/면/동 목록 가져오기 (리 단위 포함)
+                towns = self.molit_api.get_towns(city, district)
+                return jsonify({'success': True, 'towns': towns})
+
+            except Exception as e:
+                logging.error(f"읍/면/동 목록 조회 오류: {e}")
+                return jsonify({'success': False, 'message': f'읍/면/동 목록 조회 실패: {str(e)}'})
+
         @self.app.route('/api/dongs_legacy/<city>/<district>')
         def api_dongs_legacy(city, district):
             """특정 시/도, 군/구의 법정동 목록 API (기존 API 호출 방식)"""
@@ -275,50 +312,129 @@ class ApartmentTrackerApp:
             regions = self.molit_api.get_region_list()
             return jsonify({'success': True, 'regions': regions})
 
+        @self.app.route('/api/search/estimate', methods=['POST'])
+        def api_search_estimate():
+            """검색 API 호출 횟수 예측"""
+            try:
+                data = request.get_json()
+                search_params = {
+                    'search_type': data.get('search_type', 'sale'),
+                    'months': int(data.get('months', 6)),
+                    'force_refresh': data.get('force_refresh', False),
+                    'apt_name': data.get('apt_name', '')
+                }
+
+                api_calls, details = self.api_estimator.estimate_search_calls(search_params)
+                confirmation_message = self.api_estimator.generate_confirmation_message('search', api_calls, details)
+
+                return jsonify({
+                    'success': True,
+                    'api_calls': api_calls,
+                    'details': details,
+                    'confirmation_message': confirmation_message
+                })
+
+            except Exception as e:
+                self.logger.error(f"검색 예측 오류: {e}")
+                return jsonify({'success': False, 'message': f'예측 중 오류가 발생했습니다: {str(e)}'})
+
         @self.app.route('/api/search', methods=['POST'])
         def api_search():
             """아파트 검색 API (캐시 시스템 적용)"""
             try:
                 if not self.molit_api:
                     return jsonify({'success': False, 'message': 'API 연결 실패'})
-                
+
                 data = request.get_json()
                 city = data.get('city', '')
                 district = data.get('district', '')
+                town = data.get('town', '')  # 3단계 읍/면/동 추가
                 apt_name = data.get('apt_name', '')
                 months = int(data.get('months', 6))
                 start_date = data.get('start_date', '')
                 end_date = data.get('end_date', '')
                 force_refresh = data.get('force_refresh', False)  # 강제 새로고침 옵션
-                
+                confirmed = data.get('confirmed', False)  # 사용자 확인 여부
+                operation_id = None  # 초기화
+
+                # 사용자 확인이 없으면 예측만 반환
+                if not confirmed:
+                    search_params = {
+                        'search_type': 'sale',  # 기본값
+                        'months': months,
+                        'force_refresh': force_refresh,
+                        'apt_name': apt_name
+                    }
+
+                    api_calls, details = self.api_estimator.estimate_search_calls(search_params)
+                    confirmation_message = self.api_estimator.generate_confirmation_message('search', api_calls, details)
+
+                    return jsonify({
+                        'success': False,
+                        'requires_confirmation': True,
+                        'api_calls': api_calls,
+                        'details': details,
+                        'confirmation_message': confirmation_message
+                    })
+
                 if not city or not district:
                     return jsonify({'success': False, 'message': '시/도와 군/구를 모두 선택해주세요.'})
-                
+
                 # 시/도와 군/구로 지역코드 조회
                 region_code = self.molit_api.get_region_code_by_city_district(city, district)
                 if not region_code:
                     return jsonify({'success': False, 'message': '유효하지 않은 지역입니다.'})
-                
+
                 # 검색 날짜 생성 (캐시 키용)
                 search_date = datetime.now().strftime('%Y-%m-%d')
                 region_name = f"{city} {district}"
-                
+
                 # 캐시 확인 (특정 아파트 검색이 아닌 경우에만)
+                cache_choice = data.get('cache_choice', 'auto')  # 'auto', 'use_cache', 'refresh'
                 if not apt_name and not force_refresh and self.db:
                     cache_data = self.db.get_search_cache(region_code, months, search_date)
                     if cache_data:
-                        self.logger.info(f"캐시된 데이터 사용: {region_name} ({cache_data['total_count']}건)")
-                        return jsonify({
-                            'success': True,
-                            'data': cache_data['raw_data'],
-                            'classified_data': cache_data['classified_data'],
-                            'total_count': cache_data['total_count'],
-                            'region_name': cache_data['region_name'],
-                            'region_code': cache_data['region_code'],
-                            'is_demo': False,
-                            'from_cache': True,
-                            'cache_created': cache_data['created_at']
-                        })
+                        # 캐시 선택이 자동이고 확인되지 않은 경우, 사용자에게 선택권 제공
+                        if cache_choice == 'auto' and not confirmed:
+                            cache_created = cache_data['created_at']
+                            return jsonify({
+                                'success': False,
+                                'has_cache': True,
+                                'cache_info': {
+                                    'total_count': cache_data['total_count'],
+                                    'region_name': cache_data['region_name'],
+                                    'created_at': cache_created,
+                                    'data_age_hours': self._calculate_cache_age_hours(cache_created)
+                                },
+                                'message': '캐시된 데이터가 있습니다. 캐시를 사용할지 새로 조회할지 선택해주세요.'
+                            })
+
+                        # 캐시 사용 선택된 경우
+                        if cache_choice == 'use_cache':
+                            self.logger.info(f"캐시된 데이터 사용: {region_name} ({cache_data['total_count']}건)")
+                            return jsonify({
+                                'success': True,
+                                'data': cache_data['raw_data'],
+                                'classified_data': cache_data['classified_data'],
+                                'total_count': cache_data['total_count'],
+                                'region_name': cache_data['region_name'],
+                                'region_code': cache_data['region_code'],
+                                'is_demo': False,
+                                'from_cache': True,
+                                'cache_created': cache_data['created_at']
+                            })
+
+                # 캐시가 없을 때만 API 추적 시작
+                operation_id = f"search_{city}_{district}_{int(time.time())}"
+                search_params = {
+                    'search_type': 'sale',
+                    'months': months,
+                    'force_refresh': force_refresh,
+                    'apt_name': apt_name
+                }
+                api_calls, details = self.api_estimator.estimate_search_calls(search_params)
+                self.api_tracker.start_operation(operation_id, 'search', api_calls, details)
+                self.molit_api.current_operation_id = operation_id
                 
                 # API 호출하여 새 데이터 조회
                 self.logger.info(f"새 데이터 조회: {region_name}")
@@ -330,9 +446,23 @@ class ApartmentTrackerApp:
                         transactions = [tx for tx in all_data if apt_name.lower() in tx['apt_name'].lower()]
                     else:
                         transactions = self.molit_api.search_apartments_by_name(region_code, apt_name, months)
+
+                    # 특정 아파트 검색에도 읍/면/동 필터 적용
+                    if town and transactions:
+                        original_count = len(transactions)
+                        transactions = [tx for tx in transactions if tx.get('umd_nm', '') == town]
+                        filtered_count = len(transactions)
+                        self.logger.info(f"아파트 '{apt_name}' + 읍/면/동 '{town}' 필터 적용: {original_count}건 → {filtered_count}건")
                 else:
                     # 전체 아파트 조회
                     transactions = self.molit_api.get_multiple_months_data(region_code, months, start_date, end_date)
+
+                # 읍/면/동 필터 적용 (town이 지정된 경우)
+                if town and transactions:
+                    original_count = len(transactions)
+                    transactions = [tx for tx in transactions if tx.get('umd_nm', '') == town]
+                    filtered_count = len(transactions)
+                    self.logger.info(f"읍/면/동 '{town}' 필터 적용: {original_count}건 → {filtered_count}건")
                 
                 # 데이터베이스에 저장
                 if self.db and transactions:
@@ -358,7 +488,13 @@ class ApartmentTrackerApp:
                     if cache_saved:
                         self.logger.info(f"검색 결과 캐시 저장 완료: {region_name}")
                 
-                return jsonify({
+                # API 추적 완료 및 결과 가져오기
+                api_tracking_result = None
+                if hasattr(self, 'api_tracker') and operation_id:
+                    self.api_tracker.complete_operation(operation_id)
+                    api_tracking_result = self.api_tracker.get_operation_result(operation_id)
+
+                response_data = {
                     'success': True,
                     'data': transactions,
                     'classified_data': classified_data,
@@ -367,7 +503,13 @@ class ApartmentTrackerApp:
                     'region_code': region_code,
                     'is_demo': transactions[0].get('is_demo', False) if transactions else False,
                     'from_cache': False
-                })
+                }
+
+                # API 추적 결과가 있으면 포함
+                if api_tracking_result:
+                    response_data['api_tracking_result'] = api_tracking_result
+
+                return jsonify(response_data)
                 
             except Exception as e:
                 self.logger.error(f"검색 API 오류: {e}")
@@ -452,13 +594,58 @@ class ApartmentTrackerApp:
                 self.logger.error(f"거래 내역 조회 오류: {e}")
                 return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
 
+        @self.app.route('/api/refresh/estimate/<apt_name>/<region_code>')
+        def api_refresh_estimate(apt_name, region_code):
+            """데이터 새로고침 API 호출 횟수 예측"""
+            try:
+                refresh_params = {
+                    'apt_name': apt_name,
+                    'region_code': region_code,
+                    'months': 6  # 기본 6개월
+                }
+
+                api_calls, details = self.api_estimator.estimate_refresh_calls(refresh_params)
+                confirmation_message = self.api_estimator.generate_confirmation_message('refresh', api_calls, details)
+
+                return jsonify({
+                    'success': True,
+                    'api_calls': api_calls,
+                    'details': details,
+                    'confirmation_message': confirmation_message
+                })
+
+            except Exception as e:
+                self.logger.error(f"새로고침 예측 오류: {e}")
+                return jsonify({'success': False, 'message': f'예측 중 오류가 발생했습니다: {str(e)}'})
+
         @self.app.route('/api/refresh/<apt_name>/<region_code>')
         def api_refresh_data(apt_name, region_code):
             """아파트 데이터 새로고침 API"""
             try:
                 if not self.molit_api or not self.db:
                     return jsonify({'success': False, 'message': 'API 또는 데이터베이스 연결 실패'})
-                
+
+                # 사용자 확인 여부 체크
+                confirmed = request.args.get('confirmed', 'false').lower() == 'true'
+
+                if not confirmed:
+                    refresh_params = {
+                        'apt_name': apt_name,
+                        'region_code': region_code,
+                        'months': 6
+                    }
+
+                    api_calls, details = self.api_estimator.estimate_refresh_calls(refresh_params)
+                    confirmation_message = self.api_estimator.generate_confirmation_message('refresh', api_calls, details)
+
+                    return jsonify({
+                        'success': False,
+                        'requires_confirmation': True,
+                        'api_calls': api_calls,
+                        'details': details,
+                        'confirmation_message': confirmation_message
+                    })
+
                 # 최근 6개월 데이터 조회
                 transactions = self.molit_api.search_apartments_by_name(region_code, apt_name, 6)
                 
@@ -476,18 +663,63 @@ class ApartmentTrackerApp:
                 self.logger.error(f"데이터 새로고침 오류: {e}")
                 return jsonify({'success': False, 'message': f'오류가 발생했습니다: {str(e)}'})
 
+        @self.app.route('/api/search/step1/estimate', methods=['POST'])
+        def api_search_step1_estimate():
+            """1단계 검색 API 호출 횟수 예측"""
+            try:
+                data = request.get_json()
+                step1_params = {
+                    'city': data.get('city'),
+                    'district': data.get('district'),
+                    'search_type': data.get('search_type', 'sale')
+                }
+
+                api_calls, details = self.api_estimator.estimate_step1_calls(step1_params)
+                confirmation_message = self.api_estimator.generate_confirmation_message('step1', api_calls, details)
+
+                return jsonify({
+                    'success': True,
+                    'api_calls': api_calls,
+                    'details': details,
+                    'confirmation_message': confirmation_message
+                })
+
+            except Exception as e:
+                self.logger.error(f"1단계 예측 오류: {e}")
+                return jsonify({'success': False, 'message': f'예측 중 오류가 발생했습니다: {str(e)}'})
+
         @self.app.route('/api/search/step1', methods=['POST'])
         def api_search_step1():
             """1단계: 시도/군구 선택 후 법정동 목록 조회"""
             try:
                 if not self.molit_api or not self.db:
                     return jsonify({'success': False, 'message': 'API 또는 데이터베이스 연결 실패'})
-                
+
                 data = request.get_json()
                 city = data.get('city')
                 district = data.get('district')
                 dong = data.get('dong')
                 search_type = data.get('search_type', 'sale')  # 기본값: 매매
+                confirmed = data.get('confirmed', False)  # 사용자 확인 여부
+
+                # 사용자 확인이 없으면 예측만 반환
+                if not confirmed:
+                    step1_params = {
+                        'city': city,
+                        'district': district,
+                        'search_type': search_type
+                    }
+
+                    api_calls, details = self.api_estimator.estimate_step1_calls(step1_params)
+                    confirmation_message = self.api_estimator.generate_confirmation_message('step1', api_calls, details)
+
+                    return jsonify({
+                        'success': False,
+                        'requires_confirmation': True,
+                        'api_calls': api_calls,
+                        'details': details,
+                        'confirmation_message': confirmation_message
+                    })
 
                 if not city or not district or not dong:
                     return jsonify({'success': False, 'message': '시도, 군구, 법정동을 모두 선택해주세요.'})
@@ -572,29 +804,26 @@ class ApartmentTrackerApp:
                     cache_hours=24
                 )
 
-                # 개별 거래기록도 transaction_data 테이블에 저장
-                for i, transaction in enumerate(api_data):
-                    try:
-                        # 데이터 타입 확인을 위한 디버깅
-                        if i == 0:  # 첫 번째 항목만 로깅
-                            self.logger.info(f"첫 번째 transaction 타입: {type(transaction)}")
-                            self.logger.info(f"첫 번째 transaction 내용: {str(transaction)[:200]}...")
-
-                        # 문자열인 경우 건너뛰기
-                        if isinstance(transaction, str):
-                            self.logger.warning(f"문자열 데이터 건너뛰기: {transaction[:50]}...")
-                            continue
-
-                        # 딕셔너리인 경우에만 처리
+                # 거래기록을 배치로 데이터베이스에 저장
+                if api_data:
+                    # 유효한 거래 데이터만 필터링하고 region_name 추가
+                    valid_transactions = []
+                    for transaction in api_data:
                         if isinstance(transaction, dict):
                             # region_name 추가
                             transaction['region_name'] = region_name
-                            self.db.save_transaction_data(transaction)
+                            valid_transactions.append(transaction)
+                        elif isinstance(transaction, str):
+                            self.logger.warning(f"문자열 데이터 건너뛰기: {transaction[:50]}...")
                         else:
                             self.logger.warning(f"예상치 못한 데이터 타입: {type(transaction)}")
-                    except Exception as e:
-                        self.logger.error(f"거래 데이터 처리 중 오류: {e} - 타입: {type(transaction)}")
-                        continue
+
+                    # 배치로 저장 (효율적)
+                    if valid_transactions:
+                        saved_count = self.db.save_transaction_data(valid_transactions)
+                        self.logger.info(f"거래 데이터 배치 저장 완료: {saved_count}건")
+                    else:
+                        self.logger.warning("저장할 유효한 거래 데이터가 없습니다.")
                 
                 # 선택된 동으로 API 데이터 필터링
                 filtered_data = [tx for tx in api_data if tx.get('umd_nm') == dong]
@@ -1013,6 +1242,24 @@ class ApartmentTrackerApp:
                                 rent_data = self.molit_api.get_multiple_months_rent_data(region_code, months=months, progress_callback=progress_callback)
                                 api_data = (sale_data or []) + (rent_data or [])
 
+                        # 거래 데이터를 transaction_data 테이블에 저장 (캐시 유무와 관계없이)
+                        if api_data:
+                            # 유효한 거래 데이터만 필터링하고 region_name 추가
+                            valid_transactions = []
+                            region_name = f"{city} {district}"
+                            for transaction in api_data:
+                                if isinstance(transaction, dict):
+                                    # region_name 추가
+                                    transaction['region_name'] = region_name
+                                    valid_transactions.append(transaction)
+
+                            # 배치로 저장 (효율적) - 중복 체크는 데이터베이스에서 처리
+                            if valid_transactions:
+                                saved_count = self.db.save_transaction_data(valid_transactions)
+                                self.logger.info(f"백그라운드 거래 데이터 배치 저장 완료: {saved_count}건")
+                            else:
+                                self.logger.warning("백그라운드: 저장할 유효한 거래 데이터가 없습니다.")
+
                         # 선택된 동으로 필터링
                         self.logger.info(f"🔍 동 필터링 시작: 검색하는 동='{dong}', API 데이터 총 {len(api_data)}건")
 
@@ -1140,10 +1387,10 @@ class ApartmentTrackerApp:
                 clear_type = data.get('type', 'cache')  # 'cache' 또는 'all'
 
                 if clear_type == 'all':
-                    success = self.database.clear_database()
+                    success = self.db.clear_database()
                     message = "데이터베이스가 완전히 초기화되었습니다." if success else "데이터베이스 초기화에 실패했습니다."
                 else:
-                    success = self.database.clear_cache_only()
+                    success = self.db.clear_cache_only()
                     message = "캐시 데이터가 삭제되었습니다." if success else "캐시 삭제에 실패했습니다."
 
                 return jsonify({

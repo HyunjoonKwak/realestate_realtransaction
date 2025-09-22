@@ -26,28 +26,33 @@
             </div>
             <div class="card-body">
                 <div class="row">
-                    <!-- 지역 선택 -->
+                    <!-- 1단계: 시/도 선택 -->
                     <div class="col-md-4">
-                        <label for="citySelect" class="form-label">시/도</label>
+                        <label for="citySelect" class="form-label">
+                            <i class="fas fa-map-marked-alt me-1"></i>1단계: 시/도
+                        </label>
                         <select class="form-select" id="citySelect">
                             <option value="">시/도 선택</option>
-                            {% for city in cities %}
-                            <option value="{{ city }}">{{ city }}</option>
-                            {% endfor %}
                         </select>
                     </div>
 
+                    <!-- 2단계: 시/군/구 선택 -->
                     <div class="col-md-4">
-                        <label for="districtSelect" class="form-label">군/구</label>
+                        <label for="districtSelect" class="form-label">
+                            <i class="fas fa-building me-1"></i>2단계: 시/군/구
+                        </label>
                         <select class="form-select" id="districtSelect" disabled>
-                            <option value="">군/구 선택</option>
+                            <option value="">시/군/구 선택</option>
                         </select>
                     </div>
 
+                    <!-- 3단계: 읍/면/동 선택 -->
                     <div class="col-md-4">
-                        <label for="dongFilter" class="form-label">법정동 (선택사항)</label>
-                        <select class="form-select" id="dongFilter" disabled>
-                            <option value="">전체 법정동</option>
+                        <label for="townSelect" class="form-label">
+                            <i class="fas fa-home me-1"></i>3단계: 읍/면/동
+                        </label>
+                        <select class="form-select" id="townSelect" disabled>
+                            <option value="">읍/면/동 선택</option>
                         </select>
                     </div>
                 </div>
@@ -67,7 +72,7 @@
                     <div class="col-12">
                         <div class="alert alert-info mb-0">
                             <i class="fas fa-info-circle me-2"></i>
-                            <strong>사용법:</strong> 시/도와 군/구를 선택한 후 검색 버튼을 클릭하면 해당 지역의 아파트가 법정동별로 분류되어 표시됩니다.
+                            <strong>사용법:</strong> 1단계(시/도) → 2단계(시/군/구) → 3단계(읍/면/동) 순서로 선택한 후 검색하면 해당 지역의 아파트 실거래가 정보를 조회할 수 있습니다.
                         </div>
                     </div>
                 </div>
@@ -128,20 +133,25 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 $(document).ready(function() {
-    console.log('검색 페이지 초기화');
+    console.log('3단계 검색 페이지 초기화');
 
     let currentRegionCode = null;
     let currentRegionName = null;
     let allApartments = [];
     let currentSelectedApartment = null;
 
-    // 시/도 선택 이벤트
+    // 페이지 로드 시 시/도 목록 로드
+    loadCities();
+
+    // 1단계: 시/도 선택 이벤트
     $('#citySelect').on('change', function() {
         const city = $(this).val();
-        console.log('시/도 변경:', city);
+        console.log('1단계 - 시/도 변경:', city);
 
         // 하위 필드 초기화
         resetLowerFields();
@@ -151,14 +161,33 @@ $(document).ready(function() {
         }
     });
 
-    // 군/구 선택 이벤트
+    // 2단계: 시/군/구 선택 이벤트
     $('#districtSelect').on('change', function() {
         const city = $('#citySelect').val();
         const district = $(this).val();
-        console.log('군/구 변경:', district);
+        console.log('2단계 - 시/군/구 변경:', district);
+
+        // 3단계 필드 초기화
+        resetTownField();
+
+        if (city && district) {
+            loadTowns(city, district);
+        }
+
+        // 검색 결과 숨기기
+        $('#searchResults').addClass('d-none');
+        hideError();
+    });
+
+    // 3단계: 읍/면/동 선택 이벤트
+    $('#townSelect').on('change', function() {
+        const city = $('#citySelect').val();
+        const district = $('#districtSelect').val();
+        const town = $(this).val();
+        console.log('3단계 - 읍/면/동 변경:', town);
 
         // 검색 버튼 활성화/비활성화
-        if (city && district) {
+        if (city && district && town) {
             $('#searchBtn').prop('disabled', false);
             console.log('검색 버튼 활성화');
         } else {
@@ -191,32 +220,125 @@ $(document).ready(function() {
         resetForm();
     });
 
+    // 시/도 목록 로드
+    function loadCities() {
+        console.log('🚀 시/도 목록 로드 시작');
+
+        $.ajax({
+            url: '/api/cities',
+            method: 'GET',
+            beforeSend: function() {
+                console.log('📤 시/도 API 요청 전송 중...');
+            },
+            success: function(response) {
+                console.log('📨 시/도 API 응답 수신:', response);
+                if (response.success) {
+                    const cities = response.cities;
+                    console.log('📋 받은 시/도 목록:', cities);
+
+                    const $citySelect = $('#citySelect');
+                    $citySelect.find('option:not(:first)').remove();
+
+                    cities.forEach((city, index) => {
+                        const option = `<option value="${city.name}">${city.name}</option>`;
+                        $citySelect.append(option);
+                        console.log(`📝 시/도 옵션 추가 ${index + 1}/${cities.length}:`, city.name);
+                    });
+
+                    console.log('✅ 시/도 목록 로드 완료:', cities.length + '개');
+                } else {
+                    console.error('❌ 시/도 API 응답 실패:', response.message);
+                    showError('시/도 목록을 불러오는데 실패했습니다.');
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('💥 시/도 API 오류:', { xhr, status, error });
+                showError('시/도 목록을 불러오는데 실패했습니다.');
+            }
+        });
+    }
+
     // 군/구 목록 로드
     function loadDistricts(city) {
-        console.log('군/구 목록 로드:', city);
+        console.log('🚀 군/구 목록 로드 시작:', city);
+        console.log('🔗 API URL:', `/api/districts/${encodeURIComponent(city)}`);
 
         $.ajax({
             url: `/api/districts/${encodeURIComponent(city)}`,
             method: 'GET',
+            beforeSend: function() {
+                console.log('📤 군/구 API 요청 전송 중...');
+            },
             success: function(response) {
-                console.log('군/구 API 응답:', response);
+                console.log('📨 군/구 API 응답 수신:', response);
                 if (response.success) {
                     const districts = response.districts;
-                    $('#districtSelect').find('option:not(:first)').remove();
+                    console.log('📋 받은 군/구 목록:', districts);
 
-                    districts.forEach(district => {
-                        $('#districtSelect').append(`<option value="${district.name}">${district.name}</option>`);
+                    const $districtSelect = $('#districtSelect');
+                    console.log('🎯 districtSelect 요소:', $districtSelect.length);
+
+                    $districtSelect.find('option:not(:first)').remove();
+                    console.log('🧹 기존 옵션 정리 완료');
+
+                    districts.forEach((district, index) => {
+                        const option = `<option value="${district.name}">${district.name}</option>`;
+                        $districtSelect.append(option);
+                        console.log(`📝 옵션 추가 ${index + 1}/${districts.length}:`, district.name);
                     });
 
-                    $('#districtSelect').prop('disabled', false);
-                    console.log('군/구 목록 로드 완료:', districts.length + '개');
+                    $districtSelect.prop('disabled', false);
+                    console.log('✅ 군/구 목록 로드 완료:', districts.length + '개');
+                    console.log('🔓 districtSelect 활성화됨');
                 } else {
+                    console.error('❌ 군/구 API 응답 실패:', response.message);
                     showError('군/구 목록을 불러오는데 실패했습니다.');
                 }
             },
             error: function(xhr, status, error) {
-                console.error('군/구 API 오류:', error);
-                showError('군/구 목록을 불러오는 중 오류가 발생했습니다.');
+                console.error('💥 군/구 API 오류:', { xhr, status, error });
+                console.error('📄 응답 텍스트:', xhr.responseText);
+                showError('군/구 목록을 불러오는데 실패했습니다.');
+            }
+        });
+    }
+
+    // 읍/면/동 목록 로드
+    function loadTowns(city, district) {
+        console.log('🚀 읍/면/동 목록 로드 시작:', city, district);
+
+        $.ajax({
+            url: `/api/towns/${encodeURIComponent(city)}/${encodeURIComponent(district)}`,
+            method: 'GET',
+            beforeSend: function() {
+                console.log('📤 읍/면/동 API 요청 전송 중...');
+            },
+            success: function(response) {
+                console.log('📨 읍/면/동 API 응답 수신:', response);
+                if (response.success) {
+                    const towns = response.towns;
+                    console.log('📋 받은 읍/면/동 목록:', towns);
+
+                    const $townSelect = $('#townSelect');
+                    $townSelect.find('option:not(:first)').remove();
+
+                    towns.forEach((town, index) => {
+                        const levelIcon = town.level === 4 ? '📍' : '🏘️';
+                        const option = `<option value="${town.name}" data-code="${town.code}" data-level="${town.level}">${levelIcon} ${town.name}</option>`;
+                        $townSelect.append(option);
+                        console.log(`📝 읍/면/동 옵션 추가 ${index + 1}/${towns.length}:`, town.name, `(레벨: ${town.level})`);
+                    });
+
+                    $townSelect.prop('disabled', false);
+                    console.log('✅ 읍/면/동 목록 로드 완료:', towns.length + '개');
+                } else {
+                    console.error('❌ 읍/면/동 API 응답 실패:', response.message);
+                    showError('읍/면/동 목록을 불러오는데 실패했습니다.');
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('💥 읍/면/동 API 오류:', { xhr, status, error });
+                showError('읍/면/동 목록을 불러오는데 실패했습니다.');
             }
         });
     }
@@ -225,11 +347,12 @@ $(document).ready(function() {
     function performSearch() {
         const city = $('#citySelect').val();
         const district = $('#districtSelect').val();
+        const town = $('#townSelect').val();
 
-        console.log('검색 실행:', city, district);
+        console.log('검색 실행:', city, district, town);
 
-        if (!city || !district) {
-            showError('시/도와 군/구를 모두 선택해주세요.');
+        if (!city || !district || !town) {
+            showError('시/도, 시/군/구, 읍/면/동을 모두 선택해주세요.');
             return;
         }
 
@@ -237,25 +360,27 @@ $(document).ready(function() {
         hideError();
         $('#searchResults').addClass('d-none');
 
-        $.ajax({
-            url: '/api/search/step1',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                city: city,
-                district: district
-            }),
-            success: function(response) {
+        // API 확인과 함께 검색 실행
+        const searchData = {
+            city: city,
+            district: district,
+            town: town,
+            months: 6,
+            search_type: 'sale'
+        };
+
+        apiConfirmation.performSearch(
+            searchData,
+            function(response) {
+                // 성공 콜백
                 hideLoading();
                 console.log('검색 API 응답:', response);
 
                 if (response.success) {
                     currentRegionCode = response.region_code;
-                    currentRegionName = `${city} ${district}`;
-                    allApartments = response.apartment_list || [];
-
-                    // 법정동 필터 옵션 설정
-                    setupDongFilter(response.dong_list || []);
+                    // 3단계 검색에서는 시/도 + 군/구 + 읍/면/동 형태로 지역명 구성
+                    currentRegionName = `${city} ${district} ${town}`;
+                    allApartments = response.data || [];
 
                     // 검색 결과 표시
                     displaySearchResults(response);
@@ -263,12 +388,13 @@ $(document).ready(function() {
                     showError(response.message || '검색 중 오류가 발생했습니다.');
                 }
             },
-            error: function(xhr, status, error) {
+            function(error) {
+                // 에러 콜백
                 hideLoading();
                 console.error('검색 API 오류:', error);
-                showError('검색 중 오류가 발생했습니다. 다시 시도해주세요.');
+                showError(error.message || '검색 중 오류가 발생했습니다. 다시 시도해주세요.');
             }
-        });
+        );
     }
 
     // 법정동 필터 설정
@@ -287,14 +413,68 @@ $(document).ready(function() {
     function displaySearchResults(response) {
         const totalCount = response.total_count || 0;
         const apartmentCount = allApartments.length;
-        const dongCount = (response.dong_list || []).length;
+        const classifiedData = response.classified_data || {};
+        const dongCount = Object.keys(classifiedData).length;
 
         $('#resultSummary').text(
-            `${currentRegionName}: 총 ${apartmentCount}개 아파트, ${dongCount}개 법정동, ${totalCount.toLocaleString()}건 거래기록`
+            `${currentRegionName}: 총 ${apartmentCount.toLocaleString()}건 거래기록, ${dongCount}개 법정동`
         );
 
-        displayApartmentsByDong(allApartments);
+        // 검색 결과 표시
+        displayTransactionData(allApartments);
         $('#searchResults').removeClass('d-none');
+    }
+
+    // 거래 데이터 표시
+    function displayTransactionData(transactions) {
+        const container = $('#apartmentsByDong');
+        container.empty();
+
+        if (!transactions || transactions.length === 0) {
+            container.html('<div class="alert alert-warning">검색 결과가 없습니다.</div>');
+            return;
+        }
+
+        // 아파트별로 그룹화
+        const apartmentGroups = {};
+        transactions.forEach(tx => {
+            const aptName = tx.apt_name || '알 수 없음';
+            if (!apartmentGroups[aptName]) {
+                apartmentGroups[aptName] = [];
+            }
+            apartmentGroups[aptName].push(tx);
+        });
+
+        // 카드 컨테이너 생성
+        container.html('<div class="row" id="apartmentCards"></div>');
+        const cardsContainer = $('#apartmentCards');
+
+        // 아파트별 카드 생성
+        Object.keys(apartmentGroups).forEach(aptName => {
+            const transactions = apartmentGroups[aptName];
+            const avgPrice = Math.round(transactions.reduce((sum, tx) => sum + (tx.deal_amount || 0), 0) / transactions.length / 10000);
+            const buildYear = transactions[0].build_year || '';
+            const region = transactions[0].umd_nm || '';
+
+            const card = `
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card apartment-card h-100">
+                        <div class="card-body">
+                            <h6 class="card-title">${aptName}</h6>
+                            <p class="card-text">
+                                <small class="text-muted">${region} · ${buildYear}년</small><br>
+                                <strong>평균 거래가: ${avgPrice.toLocaleString()}억원</strong><br>
+                                <span class="badge bg-primary">${transactions.length}건 거래</span>
+                            </p>
+                            <button class="btn btn-sm btn-outline-primary" onclick="showApartmentDetail('${aptName}', '${transactions[0].region_code || currentRegionCode}')">
+                                상세보기
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            cardsContainer.append(card);
+        });
     }
 
     // 동별 아파트 목록 표시
@@ -391,7 +571,7 @@ $(document).ready(function() {
     }
 
     // 아파트 상세 정보 표시
-    function showApartmentDetail(aptName, regionCode) {
+    window.showApartmentDetail = function(aptName, regionCode) {
         console.log('아파트 상세 정보:', aptName, regionCode);
 
         currentSelectedApartment = { name: aptName, regionCode: regionCode };
@@ -510,11 +690,19 @@ $(document).ready(function() {
 
     // 유틸리티 함수들
     function resetLowerFields() {
+        // 2단계(시/군/구) 초기화
         $('#districtSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
-        $('#dongFilter').val('').prop('disabled', true).find('option:not(:first)').remove();
+        // 3단계(읍/면/동) 초기화
+        resetTownField();
+        // 검색 버튼 비활성화
         $('#searchBtn').prop('disabled', true);
         $('#searchResults').addClass('d-none');
         hideError();
+    }
+
+    function resetTownField() {
+        $('#townSelect').val('').prop('disabled', true).find('option:not(:first)').remove();
+        $('#searchBtn').prop('disabled', true);
     }
 
     function resetForm() {
@@ -591,5 +779,4 @@ $(document).ready(function() {
     color: #0d6efd !important;
 }
 </style>
-
 {% endblock %}

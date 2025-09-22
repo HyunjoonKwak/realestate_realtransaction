@@ -43,6 +43,7 @@ venv.bak/
 # 로그 파일
 *.log
 logs/
+*.pid
 
 # 데이터베이스
 *.db

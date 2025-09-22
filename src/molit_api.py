@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 class MolitRealEstateAPI:
     """국토교통부 부동산 실거래가 API 클래스"""
 
-    def __init__(self, service_key: str = None):
+    def __init__(self, service_key: str = None, api_tracker=None):
         """
         Args:
             service_key: 국토교통부 공공데이터포털에서 발급받은 서비스키
@@ -29,6 +29,10 @@ class MolitRealEstateAPI:
         self.base_url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
         self.rent_base_url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
         self.rent_url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"
+
+        # API 추적기 설정
+        self.api_tracker = api_tracker
+        self.current_operation_id = None
 
         # 환경 변수에서 설정 로드
         self.request_delay = float(os.getenv('API_REQUEST_DELAY', '0.05'))
@@ -461,13 +465,16 @@ class MolitRealEstateAPI:
         try:
             # Rate Limiting 적용
             self._rate_limit()
-            
+
             # API URL 구성
             url = f"{self.base_url}?serviceKey={self.service_key}&LAWD_CD={lawd_cd}&DEAL_YMD={deal_ymd}&pageNo={page_no}&numOfRows={num_of_rows}"
 
             self.logger.info(f"🏢 국토교통부 API 호출: 지역={lawd_cd}({self.get_region_name(lawd_cd)}), 기간={deal_ymd}")
             self.logger.info(f"📊 요청 파라미터: 페이지={page_no}, 조회건수={num_of_rows}")
             self.logger.debug(f"🔗 전체 URL: {url}")
+
+            # API 호출 시작 시간 기록
+            start_time = time.time()
 
             # 재사용 가능한 세션 사용
             # SSL 검증으로 먼저 시도
@@ -492,10 +499,41 @@ class MolitRealEstateAPI:
             # 응답 상태 확인
             self.logger.info(f"HTTP 상태코드: {response.status_code}")
             
+            # API 호출 완료 시간 계산
+            response_time = time.time() - start_time
+
             if response.status_code == 200:
-                return self._parse_xml_response(response.text, lawd_cd, deal_ymd)
+                result = self._parse_xml_response(response.text, lawd_cd, deal_ymd)
+
+                # API 호출 추적 기록
+                if self.api_tracker and self.current_operation_id:
+                    data_count = len(result.get('data', []))
+                    self.api_tracker.record_api_call(
+                        self.current_operation_id,
+                        'sale',
+                        lawd_cd,
+                        deal_ymd,
+                        result.get('success', False),
+                        response_time,
+                        data_count
+                    )
+
+                return result
             else:
                 self.logger.error(f"HTTP 오류: {response.status_code}")
+
+                # API 호출 추적 기록 (실패)
+                if self.api_tracker and self.current_operation_id:
+                    self.api_tracker.record_api_call(
+                        self.current_operation_id,
+                        'sale',
+                        lawd_cd,
+                        deal_ymd,
+                        False,
+                        response_time,
+                        0
+                    )
+
                 return {
                     'success': False,
                     'error': f'HTTP 오류: {response.status_code}',
@@ -505,6 +543,19 @@ class MolitRealEstateAPI:
 
         except Exception as e:
             self.logger.error(f"API 호출 실패: {e}")
+
+            # API 호출 추적 기록 (예외 발생)
+            if self.api_tracker and self.current_operation_id:
+                self.api_tracker.record_api_call(
+                    self.current_operation_id,
+                    'sale',
+                    lawd_cd,
+                    deal_ymd,
+                    False,
+                    time.time() - start_time if 'start_time' in locals() else 0,
+                    0
+                )
+
             self.logger.info("데모 데이터로 대체합니다.")
             return self._get_demo_transaction_data(lawd_cd, deal_ymd)
 
@@ -516,7 +567,23 @@ class MolitRealEstateAPI:
             # 결과 코드 확인
             result_code = root.find('.//resultCode')
             result_msg = root.find('.//resultMsg')
-            
+
+            # API 호출 한도 초과 에러 체크
+            err_msg = root.find('.//errMsg')
+            return_auth_msg = root.find('.//returnAuthMsg')
+            return_reason_code = root.find('.//returnReasonCode')
+
+            if return_reason_code is not None and return_reason_code.text == '22':
+                error_msg = "API 호출 한도 초과 - 매매 데이터를 가져올 수 없습니다. 내일 다시 시도해주세요."
+                self.logger.warning(f"매매 API 호출 한도 초과: {return_auth_msg.text if return_auth_msg is not None else ''}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'data': [],
+                    'total_count': 0,
+                    'quota_exceeded': True
+                }
+
             # resultCode가 없거나 '000'이 아닌 경우에만 오류 처리
             if result_code is not None and result_code.text and result_code.text != '000':
                 error_msg = result_msg.text if result_msg is not None else '알 수 없는 오류'
@@ -1089,21 +1156,26 @@ class MolitRealEstateAPI:
 
             for line in lines:
                 parts = line.strip().split('\t')
-                if len(parts) >= 3 and parts[2] == '존재':
+                if len(parts) >= 2:
                     code = parts[0]
                     name = parts[1]
 
-                    # 시/도 매칭 확인
-                    if city in name:
-                        # 군/구 레벨 코드인지 확인 (끝 5자리가 00000)
-                        if code.endswith('00000') and not code.endswith('0000000000'):
-                            # 중복 제거를 위해 군/구명 추출
-                            district_name = name.replace(f'{city} ', '').strip()
-                            if district_name and district_name != city:
+                    # 시/도 매칭 확인 (3단계 데이터에서 군/구 추출)
+                    if name.startswith(city + ' '):
+                        # 3단계 데이터에서 군/구 추출 (예: "서울특별시 종로구 청운동" -> "종로구")
+                        name_parts = name.split(' ')
+                        if len(name_parts) >= 3:  # 시/도 + 군/구 + 동
+                            district_name = name_parts[1]  # 군/구 부분
+                            district_code = code[:5] + '00000'  # 군/구 코드 생성
+
+                            # 중복 방지를 위한 키
+                            district_key = f"{city}_{district_name}"
+                            if district_key not in [d.get('key') for d in all_districts]:
                                 all_districts.append({
                                     'name': district_name,
-                                    'code': code,
-                                    'full_name': name
+                                    'code': district_code,
+                                    'full_name': f'{city} {district_name}',
+                                    'key': district_key
                                 })
 
                                 # 하위 구가 있는 상위 시 식별 (예: "고양시 덕양구"에서 "고양시" 추출)
@@ -1158,6 +1230,88 @@ class MolitRealEstateAPI:
             return sorted(districts, key=lambda x: x['name'])
         return []
 
+    def get_cities(self) -> List[Dict]:
+        """dong_code_active.txt에서 시/도 목록 반환"""
+        cities = []
+        seen_cities = set()
+
+        try:
+            with open('dong_code_active.txt', 'r', encoding='utf-8') as f:
+                lines = f.readlines()[1:]  # 헤더 제외
+
+            for line in lines:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    name = parts[1]
+                    name_parts = name.split(' ')
+
+                    if len(name_parts) >= 3:  # 시/도 + 군/구 + 동 형태
+                        city_name = name_parts[0]  # 첫 번째가 시/도
+
+                        if city_name not in seen_cities:
+                            cities.append({
+                                'name': city_name,
+                                'full_name': city_name
+                            })
+                            seen_cities.add(city_name)
+
+            return sorted(cities, key=lambda x: x['name'])
+        except Exception as e:
+            self.logger.error(f"시/도 목록 조회 오류: {e}")
+            return []
+
+    def get_towns(self, city: str, district: str) -> List[Dict]:
+        """dong_code_active.txt에서 특정 시/도, 군/구의 읍/면/동 목록 반환 (3단계 계층)"""
+        towns = []
+        seen_towns = set()
+
+        try:
+            with open('dong_code_active.txt', 'r', encoding='utf-8') as f:
+                lines = f.readlines()[1:]  # 헤더 제외
+
+            target_prefix = f"{city} {district}"
+
+            for line in lines:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    code = parts[0]
+                    name = parts[1]
+                    name_parts = name.split(' ')
+
+                    # 해당 시/도, 군/구에 속하는지 확인
+                    if name.startswith(target_prefix):
+                        if len(name_parts) >= 3:  # 최소 시/도 + 군/구 + 읍/면/동
+                            town_name = name_parts[2]  # 세 번째가 읍/면/동
+
+                            # 4단계(리) 데이터가 있는 경우도 포함
+                            if len(name_parts) >= 4:
+                                # "산성면 백학리" 형태
+                                full_town_name = f"{town_name} {name_parts[3]}"
+
+                                if full_town_name not in seen_towns:
+                                    towns.append({
+                                        'name': full_town_name,
+                                        'code': code[:8],  # 읍/면/동 + 리 코드
+                                        'full_name': name,
+                                        'level': 4  # 리 단위
+                                    })
+                                    seen_towns.add(full_town_name)
+
+                            # 3단계(읍/면/동) 데이터
+                            if town_name not in seen_towns:
+                                towns.append({
+                                    'name': town_name,
+                                    'code': code[:6] + '00',  # 읍/면/동 코드
+                                    'full_name': f"{target_prefix} {town_name}",
+                                    'level': 3  # 읍/면/동 단위
+                                })
+                                seen_towns.add(town_name)
+
+            return sorted(towns, key=lambda x: (x.get('level', 3), x['name']))
+        except Exception as e:
+            self.logger.error(f"읍/면/동 목록 조회 오류: {e}")
+            return []
+
     def get_dongs_from_file(self, city: str, district: str) -> List[Dict]:
         """dong_code_active.txt에서 특정 시/도, 군/구의 법정동 목록 반환"""
         dongs = []
@@ -1171,7 +1325,7 @@ class MolitRealEstateAPI:
 
             for line in lines:
                 parts = line.strip().split('\t')
-                if len(parts) >= 3 and parts[2] == '존재':
+                if len(parts) >= 2:
                     code = parts[0]
                     name = parts[1]
 
@@ -1316,6 +1470,9 @@ class MolitRealEstateAPI:
             self.logger.info(f"📊 요청 파라미터: 페이지={page_no}, 조회건수={num_of_rows}")
             self.logger.debug(f"🔗 전체 URL: {url}")
 
+            # API 호출 시작 시간 기록
+            start_time = time.time()
+
             # 재사용 가능한 세션 사용
             # SSL 검증으로 먼저 시도
             try:
@@ -1339,10 +1496,41 @@ class MolitRealEstateAPI:
             # 응답 상태 확인
             self.logger.info(f"HTTP 상태코드: {response.status_code}")
 
+            # API 호출 완료 시간 계산
+            response_time = time.time() - start_time
+
             if response.status_code == 200:
-                return self._parse_rent_xml_response(response.text, lawd_cd, deal_ymd)
+                result = self._parse_rent_xml_response(response.text, lawd_cd, deal_ymd)
+
+                # API 호출 추적 기록
+                if self.api_tracker and self.current_operation_id:
+                    data_count = len(result.get('data', []))
+                    self.api_tracker.record_api_call(
+                        self.current_operation_id,
+                        'rent',
+                        lawd_cd,
+                        deal_ymd,
+                        result.get('success', False),
+                        response_time,
+                        data_count
+                    )
+
+                return result
             else:
                 self.logger.error(f"HTTP 오류: {response.status_code}")
+
+                # API 호출 추적 기록 (실패)
+                if self.api_tracker and self.current_operation_id:
+                    self.api_tracker.record_api_call(
+                        self.current_operation_id,
+                        'rent',
+                        lawd_cd,
+                        deal_ymd,
+                        False,
+                        response_time,
+                        0
+                    )
+
                 return {
                     'success': False,
                     'error': f'HTTP 오류: {response.status_code}',
@@ -1352,6 +1540,19 @@ class MolitRealEstateAPI:
 
         except Exception as e:
             self.logger.error(f"전월세 API 호출 실패: {e}")
+
+            # API 호출 추적 기록 (예외 발생)
+            if self.api_tracker and self.current_operation_id:
+                self.api_tracker.record_api_call(
+                    self.current_operation_id,
+                    'rent',
+                    lawd_cd,
+                    deal_ymd,
+                    False,
+                    time.time() - start_time if 'start_time' in locals() else 0,
+                    0
+                )
+
             self.logger.info("전월세 데모 데이터로 대체합니다.")
             return self._get_demo_rent_data(lawd_cd, deal_ymd)
 
@@ -1363,6 +1564,22 @@ class MolitRealEstateAPI:
             # 결과 코드 확인
             result_code = root.find('.//resultCode')
             result_msg = root.find('.//resultMsg')
+
+            # API 호출 한도 초과 에러 체크
+            err_msg = root.find('.//errMsg')
+            return_auth_msg = root.find('.//returnAuthMsg')
+            return_reason_code = root.find('.//returnReasonCode')
+
+            if return_reason_code is not None and return_reason_code.text == '22':
+                error_msg = "API 호출 한도 초과 - 전월세 데이터를 가져올 수 없습니다. 내일 다시 시도해주세요."
+                self.logger.warning(f"전월세 API 호출 한도 초과: {return_auth_msg.text if return_auth_msg is not None else ''}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'data': [],
+                    'total_count': 0,
+                    'quota_exceeded': True
+                }
 
             if result_code is not None and result_code.text and result_code.text != '000':
                 error_msg = result_msg.text if result_msg is not None else '알 수 없는 오류'

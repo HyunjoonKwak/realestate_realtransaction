@@ -103,3 +103,17 @@ Built-in support for all 17 Korean administrative divisions including special ci
 - No hardcoded credentials
 - CSRF protection via Flask's built-in security
 - Production-ready session management settings
+
+## Development Guidelines
+
+### Implementation Standards
+- **IMPORTANT**: All new features and modifications must follow the requirements specified in `rules.md`
+- `rules.md` contains the official program specifications and requirements that override any other documentation
+- Before implementing any new feature, review `rules.md` to ensure compliance with the established requirements
+- All new implementations should be documented in the "신규구현사항 (추가)" section of `rules.md`
+
+### Feature Development Process
+1. Review `rules.md` for relevant requirements before starting development
+2. Implement features according to the specifications in `rules.md`
+3. Update the "신규구현사항 (추가)" section in `rules.md` with details of new implementations
+4. Ensure all features align with the program's core purpose as defined in `rules.md`
